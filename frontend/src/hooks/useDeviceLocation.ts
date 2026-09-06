@@ -33,6 +33,9 @@ export function useDeviceLocation(options: UseDeviceLocationOptions = {}) {
 
   const isMountedRef = useRef(true);
   const isRequestingRef = useRef(false);
+  const coordsRef = useRef<{ lat: number; lng: number } | null>(
+    userLocation?.status === 'locked' ? { lat: userLocation.lat, lng: userLocation.lng } : null
+  );
 
   // Sync coords to backend PostgreSQL
   const syncToBackend = useCallback(
@@ -93,6 +96,7 @@ export function useDeviceLocation(options: UseDeviceLocationOptions = {}) {
           const acc = typeof pos.coords.accuracy === 'number' && !isNaN(pos.coords.accuracy) ? pos.coords.accuracy : null;
           const time = pos.timestamp || Date.now();
 
+          coordsRef.current = { lat, lng };
           setCoords({ lat, lng });
           setAccuracy(acc);
           setTimestamp(time);
@@ -133,9 +137,10 @@ export function useDeviceLocation(options: UseDeviceLocationOptions = {}) {
           setStatus(newStatus);
           setError(errorMsg);
 
+          const currentCoords = coordsRef.current;
           setUserLocation({
-            lat: coords?.lat ?? 0,
-            lng: coords?.lng ?? 0,
+            lat: currentCoords?.lat ?? 0,
+            lng: currentCoords?.lng ?? 0,
             accuracy: null,
             timestamp: Date.now(),
             status: newStatus,
@@ -145,7 +150,7 @@ export function useDeviceLocation(options: UseDeviceLocationOptions = {}) {
         geoOptions
       );
     },
-    [enableHighAccuracy, timeout, maximumAge, setUserLocation, syncToBackend, coords]
+    [enableHighAccuracy, timeout, maximumAge, setUserLocation, syncToBackend]
   );
 
   // Recenter helper forcing fresh GPS reading
@@ -164,9 +169,13 @@ export function useDeviceLocation(options: UseDeviceLocationOptions = {}) {
     if (autoRequest && !hasFreshCoords) {
       requestLocation(false);
     } else if (hasFreshCoords && userLocation) {
-      setCoords({ lat: userLocation.lat, lng: userLocation.lng });
-      setAccuracy(userLocation.accuracy);
-      setTimestamp(userLocation.timestamp);
+      coordsRef.current = { lat: userLocation.lat, lng: userLocation.lng };
+      setCoords((prev) => {
+        if (prev?.lat === userLocation.lat && prev?.lng === userLocation.lng) return prev;
+        return { lat: userLocation.lat, lng: userLocation.lng };
+      });
+      setAccuracy((prev) => (prev === userLocation.accuracy ? prev : userLocation.accuracy));
+      setTimestamp((prev) => (prev === userLocation.timestamp ? prev : userLocation.timestamp));
       setStatus('locked');
       setLastSyncedAt(new Date(userLocation.timestamp));
     }

@@ -1,15 +1,5 @@
 import { motion } from 'framer-motion';
-import { Navigate, useNavigate } from 'react-router';
-import { useAppStore, type Role } from '../../store/useAppStore';
-
-type CoreRole = NonNullable<Role>;
-
-const rolePaths: Record<CoreRole, string> = {
-  citizen: '/citizen',
-  responder: '/responder',
-  authority_command: '/command',
-  resource_manager: '/resources',
-};
+import { useNavigate } from 'react-router';
 
 const capabilities = [
   { label: 'AI-ASSISTED', desc: '11-agent orchestration' },
@@ -19,19 +9,14 @@ const capabilities = [
 ];
 
 const roles = [
-  { icon: '👤', label: 'CITIZEN', color: '#06b6d4', desc: 'Alerts · Shelters · Routes · Help', loginMode: 'citizen' },
-  { icon: '🚑', label: 'RESPONDER', color: '#f59e0b', desc: 'Missions · Navigation · Resources', loginMode: 'responder' },
-  { icon: '🏛️', label: 'AUTHORITY', color: '#dc2626', desc: 'Command · Intelligence · Dispatch', loginMode: 'authority' },
-  { icon: '📦', label: 'RESOURCE MGR', color: '#10b981', desc: 'Shelters · Supplies · Equipment', loginMode: 'resource' },
+  { icon: '👤', label: 'CITIZEN', color: '#06b6d4', desc: 'Alerts · Shelters · Routes · Help', path: '/citizen' },
+  { icon: '🚑', label: 'RESPONDER', color: '#f59e0b', desc: 'Missions · Navigation · Resources', path: '/responder' },
+  { icon: '🏛️', label: 'AUTHORITY', color: '#dc2626', desc: 'Command · Intelligence · Dispatch', path: '/command' },
+  { icon: '📦', label: 'RESOURCE MGR', color: '#10b981', desc: 'Shelters · Supplies · Equipment', path: '/resources' },
 ];
 
 export default function LandingPage() {
-  const { isAuthenticated, role } = useAppStore();
   const navigate = useNavigate();
-
-  if (isAuthenticated && role && role in rolePaths) {
-    return <Navigate to={rolePaths[role as CoreRole]} replace />;
-  }
 
   return (
     <div className="relative w-full h-full flex flex-col overflow-hidden">
@@ -57,7 +42,7 @@ export default function LandingPage() {
       {/* Top bar */}
       <div className="relative z-20 flex items-center justify-between px-8 py-4 shrink-0">
         <div className="flex items-center gap-5">
-          <div className="flex items-center gap-3">
+          <div onClick={() => navigate('/')} className="flex items-center gap-3 cursor-pointer">
             <div style={{ filter: 'drop-shadow(0 0 8px rgba(6,182,212,0.5))' }}>
               <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
                 <polygon points="14,2 26,8 26,20 14,26 2,20 2,8" stroke="#06b6d4" strokeWidth="1.5" fill="none" opacity="0.5" />
@@ -158,7 +143,7 @@ export default function LandingPage() {
             {roles.map((r) => (
               <motion.button
                 key={r.label}
-                onClick={() => navigate(`/login?mode=${r.loginMode}`)}
+                onClick={() => navigate(r.path)}
                 className="p-4 rounded-xl text-left flex flex-col gap-2 transition-colors duration-200"
                 style={{ background: `${r.color}07`, border: `1px solid ${r.color}20` }}
                 whileHover={{ scale: 1.02 }}

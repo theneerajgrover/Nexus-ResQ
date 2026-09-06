@@ -40,18 +40,10 @@ function RequireAuth({ allowedRoles, children }: { allowedRoles: Role[]; childre
   return <>{children}</>;
 }
 
-// ── Role-aware root redirect ──────────────────────────────────────────────────
+// ── Root home page ───────────────────────────────────────────────────────────
 
 function RoleHome() {
-  const { isAuthenticated, role } = useAppStore();
-  if (!isAuthenticated) return <LandingPage />;
-  switch (role) {
-    case 'citizen': return <Navigate to="/citizen" replace />;
-    case 'responder': return <Navigate to="/responder" replace />;
-    case 'authority_command': return <Navigate to="/command" replace />;
-    case 'resource_manager': return <Navigate to="/resources" replace />;
-    default: return <LandingPage />;
-  }
+  return <LandingPage />;
 }
 
 // ── Citizen sub-routes ────────────────────────────────────────────────────────
