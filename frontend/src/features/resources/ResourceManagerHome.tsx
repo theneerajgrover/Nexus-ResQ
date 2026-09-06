@@ -1,0 +1,619 @@
+import { useState, useEffect } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { useLocation } from 'react-router';
+import { resourcesApi, sheltersApi } from '../../api';
+
+type Section = 'overview' | 'shelters' | 'supplies' | 'ambulances' | 'equipment' | 'dispatches';
+
+// ── Data ──────────────────────────────────────────────────────────────────────
+const shelters = [
+  { id: 'SHL-01', name: 'Central Community Center', capacity: 450, occupancy: 263, status: 'OPEN', accessible: true, facilities: ['Medical', 'Food', 'Water'] },
+  { id: 'SHL-02', name: 'Riverside High School', capacity: 800, occupancy: 458, status: 'OPEN', accessible: true, facilities: ['Food', 'Water', 'Cots'] },
+  { id: 'SHL-03', name: 'Metro Sports Complex', capacity: 1200, occupancy: 1111, status: 'NEAR FULL', accessible: true, facilities: ['Food', 'Medical'] },
+  { id: 'SHL-04', name: 'North Community Hall', capacity: 300, occupancy: 0, status: 'ACTIVATING', accessible: false, facilities: ['Food', 'Water'] },
+];
+
+const supplies = [
+  { id: 'SUP-MED-01', name: 'Trauma Kits', category: 'MEDICAL', qty: 240, demand: 380, unit: 'kits', location: 'Depot North', lastSync: '14:28' },
+  { id: 'SUP-WAT-02', name: 'Water (500ml)', category: 'WATER', qty: 8400, demand: 6200, unit: 'bottles', location: 'Central Depot', lastSync: '14:30' },
+  { id: 'SUP-FOO-03', name: 'Emergency Rations', category: 'FOOD', qty: 1200, demand: 1600, unit: 'packs', location: 'Multiple', lastSync: '14:20' },
+  { id: 'SUP-MED-04', name: 'Blood O+ Units', category: 'MEDICAL', qty: 48, demand: 35, unit: 'units', location: 'Hospital A', lastSync: '14:31' },
+  { id: 'SUP-PPE-05', name: 'Protective Equipment', category: 'SAFETY', qty: 560, demand: 340, unit: 'sets', location: 'Depot South', lastSync: '14:25' },
+];
+
+const ambulances = [
+  { id: 'AMB-14', callsign: 'MEDIC 14', crew: 2, status: 'AVAILABLE', location: 'Station 3', lastUpdate: '14:30' },
+  { id: 'AMB-07', callsign: 'MEDIC 07', crew: 2, status: 'DISPATCHED', location: 'INC-2847 scene', lastUpdate: '14:18' },
+  { id: 'AMB-22', callsign: 'MEDIC 22', crew: 3, status: 'AVAILABLE', location: 'Station 1', lastUpdate: '14:29' },
+  { id: 'AMB-03', callsign: 'MEDIC 03', crew: 2, status: 'RETURNING', location: 'En route Station 2', lastUpdate: '14:26' },
+  { id: 'AMB-09', callsign: 'MEDIC 09', crew: 2, status: 'MAINTENANCE', location: 'Workshop', lastUpdate: '12:00' },
+];
+
+const equipment = [
+  { id: 'EQP-01', name: 'Hydraulic Rescue Sets', qty: 8, available: 5, status: 'PARTIAL', location: 'Station 3' },
+  { id: 'EQP-02', name: 'Rope & Harness Kits', qty: 24, available: 18, status: 'AVAILABLE', location: 'Depot North' },
+  { id: 'EQP-03', name: 'Thermal Imaging Units', qty: 4, available: 2, status: 'PARTIAL', location: 'Multiple' },
+  { id: 'EQP-04', name: 'Emergency Generators', qty: 12, available: 7, status: 'PARTIAL', location: 'Depot South' },
+  { id: 'EQP-05', name: 'Water Pumping Units', qty: 6, available: 0, status: 'DEPLETED', location: 'Field' },
+];
+
+// Dispatch records — approved operational decisions from Authority/Command
+const dispatchRecords = [
+  { id: 'DSP-041', resourceType: 'TRAUMA KITS', qtyApproved: 3, qtyDispatched: 3, destination: 'INC-2849 staging', incident: 'INC-2849', unit: 'Unit Alpha-14', status: 'DISPATCHED', approvedBy: 'Authority/Command', timestamp: '14:29' },
+  { id: 'DSP-039', resourceType: 'WATER BOTTLES', qtyApproved: 50, qtyDispatched: 50, destination: 'INC-2847 scene', incident: 'INC-2847', unit: 'Unit Bravo-7', status: 'DELIVERED', approvedBy: 'Authority/Command', timestamp: '14:15' },
+  { id: 'DSP-038', resourceType: 'HYDRAULIC RESCUE', qtyApproved: 1, qtyDispatched: 0, destination: 'INC-2849 zone', incident: 'INC-2849', unit: 'Unit Echo-3', status: 'PENDING', approvedBy: 'Authority/Command', timestamp: '14:12' },
+  { id: 'DSP-035', resourceType: 'ROPE KITS', qtyApproved: 2, qtyDispatched: 2, destination: 'INC-2845 area', incident: 'INC-2845', unit: 'Unit Delta-22', status: 'DELIVERED', approvedBy: 'Authority/Command', timestamp: '13:55' },
+];
+
+// ── Shared styles ─────────────────────────────────────────────────────────────
+const sectionColor: Record<Section, string> = {
+  overview: '#10b981', shelters: '#06b6d4', supplies: '#f59e0b',
+  ambulances: '#dc2626', equipment: '#f97316', dispatches: '#a855f7',
+};
+
+const dispatchStatusColors: Record<string, string> = {
+  DISPATCHED: '#06b6d4', DELIVERED: '#10b981', PENDING: '#f59e0b',
+};
+
+const ambulanceStatusColors: Record<string, string> = {
+  AVAILABLE: '#10b981', DISPATCHED: '#dc2626', RETURNING: '#f59e0b', MAINTENANCE: '#6b7280',
+};
+const equipStatusColors: Record<string, string> = {
+  AVAILABLE: '#10b981', PARTIAL: '#f59e0b', DEPLETED: '#dc2626',
+};
+
+function Bar({ value, max, color }: { value: number; max: number; color: string }) {
+  return (
+    <div className="flex-1 h-1.5 rounded-full overflow-hidden bg-white/[0.06]">
+      <motion.div className="h-full rounded-full" style={{ background: color }}
+        initial={{ width: 0 }} animate={{ width: `${Math.min((value / max) * 100, 100)}%` }}
+        transition={{ duration: 0.7, delay: 0.1 }} />
+    </div>
+  );
+}
+
+// ── Tab content ───────────────────────────────────────────────────────────────
+function OverviewTab({
+  suppliesData = supplies,
+  sheltersData = shelters,
+  ambulancesData = ambulances,
+  dispatchesData = dispatchRecords,
+}: {
+  suppliesData?: any[];
+  sheltersData?: any[];
+  ambulancesData?: any[];
+  dispatchesData?: any[];
+} = {}) {
+  const shortages = suppliesData.filter((s) => s.qty < s.demand).length;
+  const nearFull = sheltersData.filter((s) => s.status === 'NEAR FULL').length;
+  const availAmbs = ambulancesData.filter((a) => a.status === 'AVAILABLE').length;
+  const pendingDispatches = dispatchesData.filter((d) => d.status === 'PENDING').length;
+
+  const kpis = [
+    { label: 'SUPPLY SHORTAGES', value: shortages, color: shortages > 0 ? '#dc2626' : '#10b981', sub: 'items below demand' },
+    { label: 'SHELTERS NEAR FULL', value: nearFull, color: nearFull > 0 ? '#f59e0b' : '#10b981', sub: 'capacity warning' },
+    { label: 'AMBULANCES AVAILABLE', value: availAmbs, color: availAmbs < 2 ? '#dc2626' : '#10b981', sub: `of ${ambulancesData.length} total` },
+    { label: 'PENDING DISPATCHES', value: pendingDispatches, color: pendingDispatches > 0 ? '#a855f7' : '#10b981', sub: 'awaiting resource movement' },
+  ];
+
+  const warnings = [
+    { label: 'SHL-03 Metro Complex', warn: 'NEAR FULL — 89 places remain', color: '#dc2626' },
+    { label: 'SUP-MED-01 Trauma Kits', warn: 'SHORTAGE — 140 unit deficit', color: '#dc2626' },
+    { label: 'SUP-FOO-03 Rations', warn: 'SHORTAGE — 400 pack deficit', color: '#f59e0b' },
+    { label: 'EQP-05 Water Pumps', warn: 'FULLY DEPLOYED — none available', color: '#f59e0b' },
+  ];
+
+  return (
+    <div className="h-full flex gap-5">
+      {/* KPI grid */}
+      <div className="grid grid-cols-2 grid-rows-2 gap-4 w-96 shrink-0">
+        {kpis.map((k, i) => (
+          <motion.div key={k.label} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.07 }}
+            className="p-4 rounded-xl flex flex-col justify-between"
+            style={{ background: 'rgba(15,19,25,0.8)', border: `1px solid ${k.color}22` }}>
+            <div className="font-mono text-xs text-white/35 mb-1">{k.label}</div>
+            <div className="font-condensed font-black text-4xl" style={{ color: k.color }}>{k.value}</div>
+            <div className="font-mono text-xs text-white/25 mt-1">{k.sub}</div>
+          </motion.div>
+        ))}
+      </div>
+
+      {/* Right panel: warnings + supply bars */}
+      <div className="flex-1 flex flex-col gap-4 overflow-hidden">
+        {/* Urgent warnings */}
+        <div className="p-4 rounded-xl space-y-2 shrink-0" style={{ background: 'rgba(220,38,38,0.05)', border: '1px solid rgba(220,38,38,0.18)' }}>
+          <div className="font-mono text-xs tracking-widest text-red-400 mb-2">CAPACITY WARNINGS</div>
+          {warnings.map((w) => (
+            <div key={w.label} className="flex items-center gap-3">
+              <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: w.color }} />
+              <div className="font-condensed font-bold text-xs text-white flex-1">{w.label}</div>
+              <div className="font-mono text-xs ml-auto shrink-0" style={{ color: w.color }}>{w.warn}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Supply bars */}
+        <div className="flex-1 p-4 rounded-xl" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
+          <div className="font-mono text-xs tracking-widest text-white/30 mb-4">SUPPLY vs DEMAND</div>
+          <div className="space-y-4">
+            {suppliesData.map((s) => {
+              const isShort = s.qty < s.demand;
+              const color = isShort ? '#dc2626' : '#10b981';
+              const pct = Math.round(Math.min((s.qty / (s.demand || 1)) * 100, 100));
+              return (
+                <div key={s.id}>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <div className="font-condensed font-semibold text-xs text-white">{s.name}</div>
+                    <div className="font-mono text-xs" style={{ color }}>{pct}% · {s.qty.toLocaleString()} / {s.demand.toLocaleString()} {s.unit}</div>
+                  </div>
+                  <Bar value={s.qty} max={s.demand} color={color} />
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AddNewModal({ title, fields, onClose }: { title: string; fields: { label: string; type: string; placeholder: string }[]; onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-6" style={{ background: 'rgba(8,11,15,0.85)', backdropFilter: 'blur(6px)' }}>
+      <motion.div initial={{ opacity: 0, scale: 0.93, y: 16 }} animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.96 }} transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+        className="w-full max-w-md rounded-2xl overflow-hidden"
+        style={{ background: '#0d1017', border: '1px solid rgba(16,185,129,0.35)', boxShadow: '0 0 60px rgba(16,185,129,0.1)' }}>
+        <div className="flex items-center justify-between px-6 py-4" style={{ background: 'rgba(16,185,129,0.08)', borderBottom: '1px solid rgba(16,185,129,0.2)' }}>
+          <div className="font-condensed font-black text-lg text-white">{title}</div>
+          <button onClick={onClose} className="font-mono text-xs text-white/30 hover:text-white/60">✕</button>
+        </div>
+        <div className="p-6 space-y-4">
+          {fields.map((f) => (
+            <div key={f.label}>
+              <div className="font-mono text-xs tracking-widest text-white/40 mb-1.5">{f.label}</div>
+              <input type={f.type} placeholder={f.placeholder}
+                className="w-full px-4 py-2.5 rounded-lg font-mono text-xs"
+                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', color: 'white', outline: 'none' }} />
+            </div>
+          ))}
+          <div className="font-mono text-xs text-white/20 pt-1">
+            Backend persistence required — connect to /api/resources to save
+          </div>
+          <div className="flex gap-3 pt-1">
+            <motion.button
+              className="flex-1 py-3 rounded-xl font-condensed font-black text-sm tracking-widest"
+              style={{ background: '#10b981', color: '#080b0f' }}
+              whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }}
+              onClick={onClose}>
+              ADD RECORD
+            </motion.button>
+            <button onClick={onClose} className="px-5 py-3 rounded-xl font-condensed font-bold text-sm"
+              style={{ background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.4)' }}>
+              CANCEL
+            </button>
+          </div>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
+function SheltersTab({
+  sheltersData = shelters,
+  onUpdateShelter,
+}: {
+  sheltersData?: any[];
+  onUpdateShelter?: (id: string, cap: number, occ: number) => void;
+} = {}) {
+  const [editing, setEditing] = useState<string | null>(null);
+  const [showAdd, setShowAdd] = useState(false);
+  const [tempCap, setTempCap] = useState<Record<string, number>>({});
+  const [tempOcc, setTempOcc] = useState<Record<string, number>>({});
+
+  return (
+    <div className="h-full flex flex-col gap-3 overflow-hidden">
+      <div className="flex items-center justify-between shrink-0">
+        <div className="font-mono text-xs tracking-widest text-white/30">SHELTER RECORDS — {sheltersData.length}</div>
+        <motion.button onClick={() => setShowAdd(true)}
+          className="font-condensed font-bold text-xs px-4 py-1.5 rounded-lg"
+          style={{ background: 'rgba(6,182,212,0.1)', color: '#06b6d4', border: '1px solid rgba(6,182,212,0.3)' }}
+          whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}>
+          + ADD SHELTER
+        </motion.button>
+      </div>
+      <div className="flex-1 grid grid-cols-2 gap-4 content-start overflow-y-auto">
+        {sheltersData.map((s, i) => {
+          const pct = Math.round(((s.occupancy || 0) / (s.capacity || 1)) * 100);
+          const statusColor = s.status === 'NEAR FULL' ? '#dc2626' : s.status === 'ACTIVATING' ? '#f59e0b' : '#10b981';
+          const facilities = Array.isArray(s.facilities) ? s.facilities : ['Food', 'Water', 'Medical'];
+          return (
+            <motion.div key={s.id} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.07 }}
+              className="p-5 rounded-xl"
+              style={{ background: 'rgba(15,19,25,0.8)', border: '1px solid rgba(255,255,255,0.06)' }}>
+              <div className="flex items-start justify-between mb-3">
+                <div>
+                  <div className="flex items-center gap-2 mb-1 flex-wrap">
+                    <div className="font-mono text-xs px-2 py-0.5 rounded" style={{ background: `${statusColor}18`, color: statusColor }}>{s.status}</div>
+                    {s.accessible && <div className="font-mono text-xs text-white/30">♿</div>}
+                  </div>
+                  <div className="font-condensed font-black text-base text-white">{s.name}</div>
+                </div>
+                <div className="text-right shrink-0 ml-2">
+                  <div className="font-condensed font-black text-3xl" style={{ color: statusColor }}>{pct}%</div>
+                  <div className="font-mono text-xs text-white/30">occupied</div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 mb-3">
+                <Bar value={s.occupancy || 0} max={s.capacity || 1} color={statusColor} />
+                <div className="font-mono text-xs shrink-0" style={{ color: statusColor }}>{s.occupancy}/{s.capacity}</div>
+              </div>
+              <div className="flex items-center gap-1.5 mb-3 flex-wrap">
+                {facilities.map((f: string) => (
+                  <div key={f} className="font-mono text-xs px-2 py-0.5 rounded" style={{ background: 'rgba(6,182,212,0.08)', color: '#06b6d4' }}>{f}</div>
+                ))}
+              </div>
+              <button onClick={() => setEditing(editing === s.id ? null : s.id)}
+                className="font-condensed font-bold text-xs px-3 py-1.5 rounded w-full transition-all duration-200"
+                style={{ background: 'rgba(6,182,212,0.08)', color: '#06b6d4', border: '1px solid rgba(6,182,212,0.2)' }}>
+                {editing === s.id ? 'CANCEL' : 'UPDATE CAPACITY'}
+              </button>
+              <AnimatePresence>
+                {editing === s.id && (
+                  <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
+                    className="mt-3 pt-3 border-t border-white/5 grid grid-cols-2 gap-3">
+                    {['Capacity', 'Occupancy'].map((field) => (
+                      <div key={field}>
+                        <div className="font-mono text-xs text-white/30 mb-1">{field.toUpperCase()}</div>
+                        <input type="number"
+                          defaultValue={field === 'Capacity' ? s.capacity : s.occupancy}
+                          onChange={(e) => {
+                            const val = parseInt(e.target.value) || 0;
+                            if (field === 'Capacity') setTempCap((p) => ({ ...p, [s.id]: val }));
+                            else setTempOcc((p) => ({ ...p, [s.id]: val }));
+                          }}
+                          className="w-full px-3 py-2 rounded font-mono text-sm"
+                          style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: 'white', outline: 'none' }} />
+                      </div>
+                    ))}
+                    <button className="col-span-2 py-2 rounded font-condensed font-bold text-sm tracking-widest"
+                      style={{ background: '#10b981', color: '#080b0f' }}
+                      onClick={() => {
+                        const cap = tempCap[s.id] !== undefined ? tempCap[s.id] : s.capacity;
+                        const occ = tempOcc[s.id] !== undefined ? tempOcc[s.id] : s.occupancy;
+                        if (onUpdateShelter) onUpdateShelter(s.id, cap, occ);
+                        setEditing(null);
+                      }}>
+                      SAVE UPDATE
+                    </button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </motion.div>
+          );
+        })}
+      </div>
+      <AnimatePresence>
+        {showAdd && (
+          <AddNewModal title="ADD SHELTER" onClose={() => setShowAdd(false)} fields={[
+            { label: 'SHELTER NAME', type: 'text', placeholder: 'e.g. East Community Hall' },
+            { label: 'CAPACITY', type: 'number', placeholder: 'e.g. 400' },
+            { label: 'CURRENT OCCUPANCY', type: 'number', placeholder: '0' },
+            { label: 'STATUS', type: 'text', placeholder: 'OPEN / ACTIVATING / NEAR FULL' },
+          ]} />
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+function SuppliesTab({ suppliesData = supplies }: { suppliesData?: any[] } = {}) {
+  const [showAdd, setShowAdd] = useState(false);
+  return (
+    <div className="h-full flex flex-col gap-3 overflow-hidden">
+      <div className="flex items-center justify-between shrink-0">
+        <div className="font-mono text-xs tracking-widest text-white/30">SUPPLY RECORDS — {suppliesData.length}</div>
+        <motion.button onClick={() => setShowAdd(true)}
+          className="font-condensed font-bold text-xs px-4 py-1.5 rounded-lg"
+          style={{ background: 'rgba(245,158,11,0.1)', color: '#f59e0b', border: '1px solid rgba(245,158,11,0.3)' }}
+          whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}>
+          + ADD SUPPLY
+        </motion.button>
+      </div>
+      <div className="flex-1 grid grid-cols-2 gap-4 content-start overflow-y-auto">
+        {suppliesData.map((s, i) => {
+          const isShort = s.qty < s.demand;
+          const color = isShort ? '#dc2626' : '#10b981';
+          const pct = Math.min((s.qty / (s.demand || 1)) * 100, 100);
+          return (
+            <motion.div key={s.id} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.07 }}
+              className="p-5 rounded-xl"
+              style={{ background: isShort ? 'rgba(220,38,38,0.05)' : 'rgba(15,19,25,0.8)', border: `1px solid ${isShort ? 'rgba(220,38,38,0.2)' : 'rgba(255,255,255,0.06)'}` }}>
+              <div className="flex items-start justify-between mb-3">
+                <div className="flex-1 min-w-0 mr-3">
+                  <div className="flex items-center gap-2 mb-1 flex-wrap">
+                    <div className="font-mono text-xs px-1.5 py-0.5 rounded" style={{ background: 'rgba(245,158,11,0.12)', color: '#f59e0b' }}>{s.category}</div>
+                    {isShort && <div className="font-mono text-xs px-1.5 py-0.5 rounded" style={{ background: 'rgba(220,38,38,0.12)', color: '#dc2626' }}>SHORTAGE</div>}
+                  </div>
+                  <div className="font-condensed font-black text-base text-white leading-tight">{s.name}</div>
+                  <div className="font-mono text-xs text-white/35 mt-0.5">{s.location}</div>
+                </div>
+                <div className="w-12 h-12 relative shrink-0">
+                  <svg width="48" height="48" viewBox="0 0 48 48">
+                    <circle cx="24" cy="24" r="20" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="3.5" />
+                    <circle cx="24" cy="24" r="20" fill="none" stroke={color} strokeWidth="3.5"
+                      strokeDasharray={`${(pct / 100) * 125.7} 125.7`} strokeLinecap="round" transform="rotate(-90 24 24)" />
+                  </svg>
+                  <div className="absolute inset-0 flex items-center justify-center font-condensed font-black" style={{ color, fontSize: '11px' }}>
+                    {Math.round(pct)}%
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 mb-3">
+                <Bar value={s.qty} max={s.demand} color={color} />
+                <div className="font-mono text-xs shrink-0" style={{ color }}>{s.qty.toLocaleString()}/{s.demand.toLocaleString()}</div>
+              </div>
+              <div className="flex items-center justify-between">
+                <div className="font-mono text-xs text-white/25">synced {s.lastSync || 'recently'}</div>
+                <button className="font-condensed font-bold text-xs px-3 py-1.5 rounded transition-all duration-200"
+                  style={{ background: `${color}15`, color, border: `1px solid ${color}33` }}>
+                  ALLOCATE
+                </button>
+              </div>
+            </motion.div>
+          );
+        })}
+      </div>
+      <AnimatePresence>
+        {showAdd && (
+          <AddNewModal title="ADD SUPPLY" onClose={() => setShowAdd(false)} fields={[
+            { label: 'RESOURCE NAME', type: 'text', placeholder: 'e.g. Blankets' },
+            { label: 'CATEGORY', type: 'text', placeholder: 'MEDICAL / FOOD / WATER / SAFETY' },
+            { label: 'QUANTITY', type: 'number', placeholder: 'e.g. 500' },
+            { label: 'LOCATION', type: 'text', placeholder: 'e.g. Depot North' },
+          ]} />
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+function AmbulancesTab({ ambulancesData = ambulances }: { ambulancesData?: any[] } = {}) {
+  const [showAdd, setShowAdd] = useState(false);
+  return (
+    <div className="h-full flex flex-col gap-3 overflow-hidden">
+      <div className="flex items-center justify-between shrink-0">
+        <div className="font-mono text-xs tracking-widest text-white/30">AMBULANCE RECORDS — {ambulancesData.length}</div>
+        <motion.button onClick={() => setShowAdd(true)}
+          className="font-condensed font-bold text-xs px-4 py-1.5 rounded-lg"
+          style={{ background: 'rgba(220,38,38,0.1)', color: '#dc2626', border: '1px solid rgba(220,38,38,0.3)' }}
+          whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}>
+          + ADD AMBULANCE
+        </motion.button>
+      </div>
+      <div className="flex-1 grid grid-cols-2 gap-4 content-start overflow-y-auto">
+        {ambulancesData.map((a, i) => {
+          const color = ambulanceStatusColors[a.status] || '#6b7280';
+          return (
+            <motion.div key={a.id} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.07 }}
+              className="p-5 rounded-xl"
+              style={{ background: 'rgba(15,19,25,0.8)', border: `1px solid ${color}22` }}>
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: `${color}12`, border: `1px solid ${color}33` }}>
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                    <rect x="2" y="8" width="20" height="10" rx="2" stroke={color} strokeWidth="1.5" />
+                    <path d="M6 8V6a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v2" stroke={color} strokeWidth="1.5" />
+                    <circle cx="7" cy="18" r="2" stroke={color} strokeWidth="1.5" />
+                    <circle cx="17" cy="18" r="2" stroke={color} strokeWidth="1.5" />
+                    <path d="M10 12h4M12 10v4" stroke={color} strokeWidth="1.5" strokeLinecap="round" />
+                  </svg>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="font-condensed font-black text-base text-white">{a.callsign || a.name || a.id}</div>
+                  <div className="font-mono text-xs text-white/40">{a.location}</div>
+                </div>
+              </div>
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <div className="font-mono text-xs text-white/30 mb-0.5">CREW</div>
+                  <div className="font-condensed font-bold text-2xl text-white">{a.crew || 2}</div>
+                </div>
+                <div className="font-mono text-xs px-3 py-1.5 rounded tracking-widest"
+                  style={{ background: `${color}15`, color, border: `1px solid ${color}33` }}>
+                  {a.status}
+                </div>
+              </div>
+              <div className="font-mono text-xs text-white/25 pt-2 border-t border-white/[0.04]">
+                Updated {a.lastUpdate || 'recently'}
+              </div>
+            </motion.div>
+          );
+        })}
+      </div>
+      <AnimatePresence>
+        {showAdd && (
+          <AddNewModal title="ADD AMBULANCE" onClose={() => setShowAdd(false)} fields={[
+            { label: 'CALLSIGN', type: 'text', placeholder: 'e.g. MEDIC 31' },
+            { label: 'CREW SIZE', type: 'number', placeholder: 'e.g. 2' },
+            { label: 'HOME STATION', type: 'text', placeholder: 'e.g. Station 4' },
+            { label: 'STATUS', type: 'text', placeholder: 'AVAILABLE / MAINTENANCE' },
+          ]} />
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+function EquipmentTab({ equipmentData = equipment }: { equipmentData?: any[] } = {}) {
+  const [showAdd, setShowAdd] = useState(false);
+  return (
+    <div className="h-full flex flex-col gap-3 overflow-hidden">
+      <div className="flex items-center justify-between shrink-0">
+        <div className="font-mono text-xs tracking-widest text-white/30">EQUIPMENT RECORDS — {equipmentData.length}</div>
+        <motion.button onClick={() => setShowAdd(true)}
+          className="font-condensed font-bold text-xs px-4 py-1.5 rounded-lg"
+          style={{ background: 'rgba(249,115,22,0.1)', color: '#f97316', border: '1px solid rgba(249,115,22,0.3)' }}
+          whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}>
+          + ADD EQUIPMENT
+        </motion.button>
+      </div>
+      <div className="flex-1 grid grid-cols-3 gap-4 content-start overflow-y-auto">
+        {equipmentData.map((e, i) => {
+          const color = equipStatusColors[e.status] || '#6b7280';
+          const pct = Math.round((e.available / (e.qty || 1)) * 100);
+          return (
+            <motion.div key={e.id} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.07 }}
+              className="p-5 rounded-xl"
+              style={{ background: 'rgba(15,19,25,0.8)', border: `1px solid ${color}22` }}>
+              <div className="flex items-center justify-between mb-3">
+                <div className="font-mono text-xs px-2 py-0.5 rounded" style={{ background: `${color}15`, color }}>{e.status}</div>
+                <div className="font-condensed font-black text-2xl" style={{ color }}>{e.available}/{e.qty}</div>
+              </div>
+              <div className="font-condensed font-bold text-sm text-white mb-1">{e.name}</div>
+              <div className="font-mono text-xs text-white/35 mb-4">{e.location}</div>
+              <div className="flex items-center gap-2">
+                <Bar value={e.available} max={e.qty || 1} color={color} />
+                <div className="font-mono text-xs text-white/30 shrink-0">{pct}%</div>
+              </div>
+            </motion.div>
+          );
+        })}
+      </div>
+      <AnimatePresence>
+        {showAdd && (
+          <AddNewModal title="ADD EQUIPMENT" onClose={() => setShowAdd(false)} fields={[
+            { label: 'EQUIPMENT NAME', type: 'text', placeholder: 'e.g. Defibrillators' },
+            { label: 'TOTAL QUANTITY', type: 'number', placeholder: 'e.g. 10' },
+            { label: 'AVAILABLE', type: 'number', placeholder: 'e.g. 10' },
+            { label: 'LOCATION', type: 'text', placeholder: 'e.g. Station 1' },
+          ]} />
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+function DispatchRecordsTab({ dispatchesData = dispatchRecords }: { dispatchesData?: any[] } = {}) {
+  return (
+    <div className="h-full space-y-3 overflow-y-auto">
+      <div className="font-mono text-xs tracking-widest text-white/30 mb-1">
+        APPROVED DISPATCH RECORDS — AUTHORITY / COMMAND
+      </div>
+      {dispatchesData.map((rec, i) => {
+        const color = dispatchStatusColors[rec.status] || '#6b7280';
+        return (
+          <motion.div key={rec.id} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.07 }}
+            className="p-4 rounded-xl"
+            style={{ background: 'rgba(15,19,25,0.8)', border: `1px solid ${color}22` }}>
+            <div className="flex items-start justify-between gap-4 mb-3">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-3 mb-1">
+                  <div className="font-mono text-xs px-2 py-0.5 rounded" style={{ background: `${color}15`, color }}>{rec.status}</div>
+                  <div className="font-mono text-xs text-white/30">{rec.id}</div>
+                  <div className="font-mono text-xs text-white/20">{rec.timestamp}</div>
+                </div>
+                <div className="font-condensed font-black text-base text-white">{rec.resourceType}</div>
+                <div className="font-mono text-xs text-white/40">{rec.unit} → {rec.destination}</div>
+              </div>
+              <div className="text-right shrink-0">
+                <div className="font-mono text-xs text-white/30 mb-0.5">APPROVED / DISPATCHED</div>
+                <div className="font-condensed font-bold text-lg" style={{ color }}>
+                  {rec.qtyApproved} / {rec.qtyDispatched}
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-4 pt-3 border-t border-white/[0.04]">
+              <div className="flex items-center gap-2">
+                <div className="font-mono text-xs text-white/25">INCIDENT</div>
+                <div className="font-mono text-xs" style={{ color: '#dc2626' }}>{rec.incident}</div>
+              </div>
+              <div className="flex items-center gap-2 ml-auto">
+                <div className="font-mono text-xs text-white/25">APPROVED BY</div>
+                <div className="font-mono text-xs text-white/50">{rec.approvedBy}</div>
+              </div>
+            </div>
+          </motion.div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Main ──────────────────────────────────────────────────────────────────────
+export default function ResourceManagerHome() {
+  const location = useLocation();
+  const section: Section =
+    location.pathname.startsWith('/resources/shelters') ? 'shelters' :
+    location.pathname.startsWith('/resources/supplies') ? 'supplies' :
+    location.pathname.startsWith('/resources/ambulances') ? 'ambulances' :
+    location.pathname.startsWith('/resources/equipment') ? 'equipment' :
+    location.pathname.startsWith('/resources/dispatches') ? 'dispatches' : 'overview';
+
+  const [shelterList, setShelterList] = useState(shelters);
+  const [supplyList, setSupplyList] = useState(supplies);
+  const [ambulanceList, setAmbulanceList] = useState(ambulances);
+  const [equipmentList, setEquipmentList] = useState(equipment);
+  const [dispatchList, setDispatchList] = useState(dispatchRecords);
+
+  useEffect(() => {
+    sheltersApi.getAll().then((r) => r.data && r.data.length && setShelterList(r.data)).catch(() => {});
+    resourcesApi.getSupplies().then((r) => r.data && r.data.length && setSupplyList(r.data)).catch(() => {});
+    resourcesApi.getAmbulances().then((r) => r.data && r.data.length && setAmbulanceList(r.data)).catch(() => {});
+    resourcesApi.getEquipment().then((r) => r.data && r.data.length && setEquipmentList(r.data)).catch(() => {});
+    resourcesApi.getDispatches().then((r) => r.data && r.data.length && setDispatchList(r.data)).catch(() => {});
+  }, []);
+
+  const handleUpdateShelter = async (id: string, cap: number, occ: number) => {
+    try {
+      await sheltersApi.updateStatus(id, { capacity: cap, occupancy: occ });
+      setShelterList((prev) => prev.map((s) => s.id === id ? { ...s, capacity: cap, occupancy: occ } : s));
+    } catch (e) {
+      console.error('Failed to update shelter status:', e);
+    }
+  };
+
+  return (
+    <div className="w-full h-full flex flex-col overflow-hidden">
+      {/* Header bar */}
+      <motion.div
+        className="glass-strong shrink-0 flex items-center gap-6 px-6 py-3"
+        style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}
+        initial={{ y: -20, opacity: 0 }}
+        animate={{ y: 0, opacity: 1 }}
+        transition={{ duration: 0.5 }}
+      >
+        {/* Title */}
+        <div className="shrink-0">
+          <div className="font-condensed font-black text-lg text-white leading-none">WHERE CAPACITY</div>
+          <div className="font-condensed font-black text-lg leading-none" style={{ color: '#10b981' }}>IS FAILING</div>
+        </div>
+
+        {/* Status */}
+        <div className="font-mono text-xs text-white/25 shrink-0">
+          RESOURCE MGR · <span className="text-white/45">LIVE</span>
+        </div>
+      </motion.div>
+
+      {/* Content area — fills remaining height */}
+      <div className="flex-1 overflow-hidden p-5">
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={section}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.25 }}
+            className="h-full"
+          >
+            {section === 'overview' && <OverviewTab suppliesData={supplyList} sheltersData={shelterList} ambulancesData={ambulanceList} dispatchesData={dispatchList} />}
+            {section === 'shelters' && <SheltersTab sheltersData={shelterList} onUpdateShelter={handleUpdateShelter} />}
+            {section === 'supplies' && <SuppliesTab suppliesData={supplyList} />}
+            {section === 'ambulances' && <AmbulancesTab ambulancesData={ambulanceList} />}
+            {section === 'equipment' && <EquipmentTab equipmentData={equipmentList} />}
+            {section === 'dispatches' && <DispatchRecordsTab dispatchesData={dispatchList} />}
+          </motion.div>
+        </AnimatePresence>
+      </div>
+    </div>
+  );
+}
