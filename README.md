@@ -1420,4 +1420,3 @@ Built as an AI-assisted disaster coordination and emergency-response platform.
   <strong>NEXUS RESQ</strong><br>
   AI-ASSISTED · REAL-TIME · MULTI-AGENCY · HUMAN-SUPERVISED
 </p>
-```
