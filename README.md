@@ -1,4 +1,3 @@
-````markdown
 # Nexus ResQ
 
 <p align="center">
