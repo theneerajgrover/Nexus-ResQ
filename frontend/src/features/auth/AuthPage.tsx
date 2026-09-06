@@ -667,7 +667,7 @@ function OperationalLogin({
 
 // ── Main AuthPage ─────────────────────────────────────────────────────────────
 export default function AuthPage() {
-  const { setRole, setAuthenticated } = useAppStore();
+  const { setRole, setAuthenticated, setUser } = useAppStore();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
@@ -713,6 +713,7 @@ export default function AuthPage() {
         if (res.user.token) {
           localStorage.setItem('nexus_token', res.user.token);
         }
+        setUser({ id: res.user.id, name: res.user.name, email: res.user.email });
         setRole(role);
         setAuthenticated(true);
         const routes: Record<CoreRole, string> = {
@@ -744,6 +745,7 @@ export default function AuthPage() {
         if (res.user.token) {
           localStorage.setItem('nexus_token', res.user.token);
         }
+        setUser({ id: res.user.id, name: res.user.name, email: res.user.email });
         setRole('citizen');
         setAuthenticated(true);
         navigate('/citizen');

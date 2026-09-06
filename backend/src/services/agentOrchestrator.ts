@@ -355,27 +355,61 @@ export class AgentOrchestratorService {
       );
 
       // ── AGENT 7: ROUTE (7/11) ─────────────────────────────────────
-      await updateAgentState(7, 'Route', 'ROUTE', 'RUNNING', 50, `Computing unobstructed evacuation corridor...`);
+      await updateAgentState(7, 'Route', 'ROUTE', 'RUNNING', 50, `Evaluating real-world route options and corridor safety...`);
       await sleep(380);
 
-      const routesRes = await query(`
-        SELECT * FROM evacuation_routes 
-        WHERE safe = TRUE AND congestion != 'BLOCKED' 
-        ORDER BY distance ASC LIMIT 3
-      `);
-      const primaryRoute = routesRes.rows[0] || {
-        id: 'RT-A',
-        label: 'Route A — Southern Clear Corridor',
-        via: 'South Arterial Hwy',
-        distance: '4.2 km',
-        eta: '8 mins',
+      const { computeRouteAlternatives, evaluateRouteSafety, persistActiveRoute } = await import('./routingService');
+      const originCoords = {
+        lat: primaryResponder.latitude ? parseFloat(primaryResponder.latitude) : parseFloat(incident.latitude) + 0.012,
+        lng: primaryResponder.longitude ? parseFloat(primaryResponder.longitude) : parseFloat(incident.longitude) - 0.015,
       };
+      const destCoords = {
+        lat: parseFloat(incident.latitude) || 52.0,
+        lng: parseFloat(incident.longitude) || 48.0,
+      };
+
+      const candidateRoutes = await computeRouteAlternatives(originCoords, destCoords);
+      const evaluatedRoutes = await evaluateRouteSafety(candidateRoutes, {
+        incidentId: incident.id,
+        type: incident.type,
+        location: incident.location,
+      });
+
+      const primaryRoute = evaluatedRoutes[0] || {
+        id: 'RT-A',
+        label: 'Route A (Primary Corridor)',
+        via: 'Tactical Arterial',
+        distanceFormatted: '4.2 km',
+        etaFormatted: '8 mins',
+        safetyStatus: 'SAFE',
+        safetyScore: 100,
+        polyline: '',
+        coordinates: [],
+        riskFactors: [],
+      };
+
+      // Persist to PostgreSQL active_routes table
+      await persistActiveRoute(
+        incident.id,
+        incident.request_id || null,
+        primaryResponder.id,
+        originCoords,
+        destCoords,
+        primaryRoute,
+        evaluatedRoutes,
+        `AI Orchestrator Stage 7 selected safest corridor (${primaryRoute.safetyStatus} - Score: ${primaryRoute.safetyScore})`
+      ).catch(() => {});
 
       context.route = {
         routeId: primaryRoute.id,
         label: primaryRoute.label,
         via: primaryRoute.via,
-        eta: primaryRoute.eta,
+        eta: primaryRoute.etaFormatted,
+        distance: primaryRoute.distanceFormatted,
+        safetyStatus: primaryRoute.safetyStatus,
+        safetyScore: primaryRoute.safetyScore,
+        polyline: primaryRoute.polyline,
+        riskFactors: primaryRoute.riskFactors,
       };
       await updateAgentState(
         7,
@@ -383,7 +417,7 @@ export class AgentOrchestratorService {
         'ROUTE',
         'COMPLETE',
         100,
-        `Clear transit route identified: ${primaryRoute.label} (ETA: ${primaryRoute.eta})`,
+        `Safest viable route selected: ${primaryRoute.label} (${primaryRoute.safetyStatus} · ${primaryRoute.etaFormatted})`,
         context.route
       );
 
@@ -423,9 +457,9 @@ export class AgentOrchestratorService {
       await sleep(380);
 
       const planAction = `Deploy ${primaryResponder.name} & ${primaryAmbulance.callsign} to ${incident.location}`;
-      const planReason = `Compounding ${incident.type.toLowerCase()} threat at ${incident.location} with ${incident.severity} severity. Deploy extrication team via ${primaryRoute.label} and direct evacuees to ${assignedShelter.name}.`;
+      const planReason = `Compounding ${incident.type.toLowerCase()} threat at ${incident.location} with ${incident.severity} severity. Deploy extrication team via ${primaryRoute.label} (${primaryRoute.safetyStatus}) and direct evacuees to ${assignedShelter.name}.`;
       const proposedActions = [
-        `Dispatch ${primaryResponder.name} via ${primaryRoute.label} (ETA ${primaryRoute.eta})`,
+        `Dispatch ${primaryResponder.name} via ${primaryRoute.label} (ETA ${primaryRoute.etaFormatted}, Status: ${primaryRoute.safetyStatus})`,
         `Pre-position ${primaryAmbulance.callsign} at emergency medical triage staging zone`,
         `Establish ${perimeterMeters}m exclusion perimeter around ${incident.location}`,
         `Direct up to ${affectedPop} evacuees to ${assignedShelter.name} (${shelterHeadroom} spaces available)`,
@@ -456,13 +490,14 @@ export class AgentOrchestratorService {
         confidence: 94.5,
         risk_flags: [
           `Active ${incident.type} hazard in localized sector`,
-          `Traffic channeled through ${primaryRoute.label}`,
+          `Traffic channeled through ${primaryRoute.label} (${primaryRoute.safetyStatus})`,
           `Critical mitigation window: ${criticalWindowMinutes} minutes`,
+          ...(primaryRoute.riskFactors || []),
         ],
         constraintsChecked: [
           `Resource availability confirmed: ${primaryResponder.name} and ${primaryAmbulance.callsign} ready`,
           `Shelter headroom validated: ${assignedShelter.name} (${shelterHeadroom} available spaces)`,
-          `Route clearance verified: ${primaryRoute.label} safe and unobstructed`,
+          `Route clearance verified: ${primaryRoute.label} (${primaryRoute.safetyStatus} - Score: ${primaryRoute.safetyScore}/100)`,
           `Mandatory Human Supervision Gate armed`,
         ],
         validation_timestamp: new Date().toISOString(),
@@ -475,7 +510,7 @@ export class AgentOrchestratorService {
         'CRITIC',
         'COMPLETE',
         100,
-        `AI Confidence: 94.5% · Constraints verified · 0 critical violations · Gate Armed`,
+        `AI Confidence: 94.5% · Constraints verified · Route Safety: ${primaryRoute.safetyStatus} · Gate Armed`,
         criticValidation
       );
 
@@ -743,21 +778,88 @@ export class AgentOrchestratorService {
 
     // B. Find and dispatch available responder
     const availResp = await query(`
-      SELECT id, name FROM responders 
+      SELECT id, name, latitude, longitude FROM responders 
       WHERE status = 'AVAILABLE' 
       ORDER BY id ASC LIMIT 1
     `);
     let assignedUnitName = 'Alpha-14 SAR Unit';
+    let assignedRespId = 'R-14';
     if (availResp.rowCount && availResp.rowCount > 0) {
       const resp = availResp.rows[0];
       assignedUnitName = resp.name;
+      assignedRespId = resp.id;
       await query(`
         UPDATE responders 
-        SET status = 'EN ROUTE', current_incident_id = $1, updated_at = CURRENT_TIMESTAMP
+        SET status = 'ASSIGNED', current_incident_id = $1, updated_at = CURRENT_TIMESTAMP
         WHERE id = $2
       `, [incidentId, resp.id]);
-      console.log(`[DB Mutation] Responder ${resp.name} (${resp.id}) set to EN ROUTE for ${incidentId}`);
+      console.log(`[DB Mutation] Responder ${resp.name} (${resp.id}) set to ASSIGNED for ${incidentId}`);
     }
+
+    // Create / Update missions record in PostgreSQL
+    const missionId = `MSN-${incidentId.replace(/[^0-9]/g, '') || Date.now().toString().slice(-4)}`;
+    const incDetailsRes = await query(`SELECT * FROM incidents WHERE id = $1`, [incidentId]);
+    const incRow = incDetailsRes.rows[0] || {};
+
+    await query(`
+      INSERT INTO missions (
+        id, incident_id, responder_id, title, location, latitude, longitude, status, priority, casualties_reported, hazards, perimeter, notes, updated_at
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, 'ASSIGNED', $8, 0, $9, '250m', $10, CURRENT_TIMESTAMP)
+      ON CONFLICT (id) DO UPDATE
+      SET responder_id = EXCLUDED.responder_id, status = 'ASSIGNED', updated_at = CURRENT_TIMESTAMP
+    `, [
+      missionId,
+      incidentId,
+      assignedRespId,
+      `Operational Mission for ${incidentId}`,
+      incRow.location || 'Incident Area',
+      incRow.latitude || 52.0,
+      incRow.longitude || 48.0,
+      incRow.severity || 'HIGH',
+      [incRow.type || 'GENERAL'],
+      `Unit ${assignedUnitName} dispatched via human authorization.`
+    ]).catch(() => {});
+
+    // Update emergency_requests and incidents tables
+    await query(`
+      UPDATE emergency_requests 
+      SET assigned_responder_id = $1, status = 'ASSIGNED', updated_at = CURRENT_TIMESTAMP 
+      WHERE incident_id = $2
+    `, [assignedRespId, incidentId]).catch(() => {});
+
+    await query(`
+      UPDATE incidents 
+      SET assigned_responder_id = $1, status = 'ASSIGNED', updated_at = CURRENT_TIMESTAMP 
+      WHERE id = $2
+    `, [assignedRespId, incidentId]).catch(() => {});
+
+    // Record transition in incident_status_history
+    await query(`
+      INSERT INTO incident_status_history (id, request_id, incident_id, previous_status, new_status, actor, responder_id, notes, created_at)
+      VALUES ($1, $2, $3, 'ACCEPTED', 'ASSIGNED', $4, $5, $6, CURRENT_TIMESTAMP)
+    `, [
+      `HIST-${Date.now()}`,
+      incRow.request_id || null,
+      incidentId,
+      reviewer,
+      assignedRespId,
+      `Authority approved dispatch plan. Assigned unit ${assignedUnitName}.`
+    ]).catch(() => {});
+
+    // Broadcast 8-step lifecycle change via SSE
+    broadcastEvent('INCIDENT_STATUS_CHANGED', {
+      incidentId,
+      requestId: incRow.request_id || null,
+      responderId: assignedRespId,
+      previousStatus: 'ACCEPTED',
+      newStatus: 'ASSIGNED',
+      stepIndex: 2,
+      label: 'Responder Assigned',
+      description: `Rescue unit ${assignedUnitName} assigned to mission.`,
+      actor: reviewer,
+      timestamp: Date.now(),
+    });
 
     // C. Find and dispatch available ambulance
     const availAmb = await query(`

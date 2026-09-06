@@ -34,6 +34,7 @@ emergencyRouter.post('/request', optionalAuth, async (req: Request, res: Respons
       contact_name,
       phone,
       contact_phone,
+      accuracy,
     } = req.body;
 
     // 1. Mandatory Location Validation
@@ -66,6 +67,7 @@ emergencyRouter.post('/request', optionalAuth, async (req: Request, res: Respons
     // 4. Coordinates extraction (use actual coordinates if valid numbers, else null — no hardcoded dummy coordinates)
     const validLat = typeof latitude === 'number' && !isNaN(latitude) ? latitude : null;
     const validLon = typeof longitude === 'number' && !isNaN(longitude) ? longitude : null;
+    const validAccuracy = typeof accuracy === 'number' && !isNaN(accuracy) ? accuracy : null;
 
     const effectiveName = (name || contact_name || '').trim() || (req.user?.name || 'Anonymous Citizen');
     const effectivePhone = (phone || contact_phone || '').trim() || null;
@@ -74,14 +76,15 @@ emergencyRouter.post('/request', optionalAuth, async (req: Request, res: Respons
     const userId = req.user?.id || null;
 
     const sosId = `SOS-${Math.floor(10000 + Math.random() * 90000)}`;
+    const incId = `INC-${Date.now().toString().slice(-4)}`;
 
-    // 5. Insert into PostgreSQL emergency_requests table
+    // 5. Insert into PostgreSQL emergency_requests table with 8-step lifecycle starting status 'REQUESTED'
     const insertRes = await query(
       `INSERT INTO emergency_requests (
         id, user_id, emergency_type, assistance_types, assistance_requested, location, latitude, longitude,
-        details, contact_name, requester_name, contact_phone, phone_number, requester_ip, source, status,
-        created_at, updated_at
-      ) VALUES ($1, $2, $3, $4, $4, $5, $6, $7, $8, $9, $9, $10, $10, $11, 'WEB_EMERGENCY', 'RECEIVED', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        accuracy, details, contact_name, requester_name, contact_phone, phone_number, requester_ip, source,
+        status, incident_id, created_at, updated_at
+      ) VALUES ($1, $2, $3, $4, $4, $5, $6, $7, $8, $9, $10, $10, $11, $11, $12, 'WEB_EMERGENCY', 'REQUESTED', $13, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
       RETURNING *`,
       [
         sosId,
@@ -91,36 +94,85 @@ emergencyRouter.post('/request', optionalAuth, async (req: Request, res: Respons
         effectiveLocation,
         validLat,
         validLon,
+        validAccuracy,
         effectiveDetails,
         effectiveName,
         effectivePhone,
         clientIp,
+        incId,
       ]
     );
 
     const savedRequest = insertRes.rows[0];
 
     // 6. Spawn active incident in Command / Operations feed
-    const incId = `INC-${Date.now().toString().slice(-4)}`;
     const incidentType = ['STRUCTURAL', 'FLOOD', 'MEDICAL', 'FIRE', 'EVACUATION'].includes(effectiveType)
       ? effectiveType
       : 'OTHER';
 
     await query(
-      `INSERT INTO incidents (id, title, type, severity, location, latitude, longitude, status, responders_count, pending)
-       VALUES ($1, $2, $3, 'HIGH', $4, $5, $6, 'PENDING', 0, TRUE)
-       ON CONFLICT (id) DO NOTHING`,
+      `INSERT INTO incidents (id, title, type, severity, location, latitude, longitude, status, responders_count, pending, request_id)
+       VALUES ($1, $2, $3, 'HIGH', $4, $5, $6, 'REQUESTED', 0, TRUE, $7)
+       ON CONFLICT (id) DO UPDATE SET request_id = $7`,
       [
         incId,
         `Citizen SOS: ${effectiveType} (${assistanceArray.join(', ')})`,
         incidentType,
         effectiveLocation,
-        validLat || 52.0,
-        validLon || 48.0,
+        validLat !== null ? validLat : 0,
+        validLon !== null ? validLon : 0,
+        sosId,
       ]
     ).catch(() => {});
 
-    // 7. Audit log
+    // 7. Initial Entry in incident_status_history
+    await query(
+      `INSERT INTO incident_status_history (id, request_id, incident_id, previous_status, new_status, actor, notes, created_at)
+       VALUES ($1, $2, $3, NULL, 'REQUESTED', $4, $5, CURRENT_TIMESTAMP)`,
+      [
+        `HIST-${Date.now()}`,
+        sosId,
+        incId,
+        effectiveName,
+        `Citizen emergency registered at ${effectiveLocation} with device geolocation.`,
+      ]
+    ).catch(() => {});
+
+    // 8. Notification in notifications table
+    const notifId = `NOTIF-${Date.now()}`;
+    await query(
+      `INSERT INTO notifications (id, role, type, priority, incident_id, title, message, status)
+       VALUES ($1, 'authority_command', 'EMERGENCY_REQUEST_RECEIVED', 'CRITICAL', $2, $3, $4, 'UNREAD')`,
+      [
+        notifId,
+        incId,
+        'Emergency Request Received',
+        `New ${effectiveType} SOS reported by ${effectiveName} at ${effectiveLocation}.`,
+      ]
+    ).catch(() => {});
+
+    // 9. Real-time SSE Broadcast
+    const { broadcastEvent } = await import('./realtime');
+    broadcastEvent('EMERGENCY_REQUEST_CREATED', {
+      requestId: sosId,
+      incidentId: incId,
+      location: effectiveLocation,
+      latitude: validLat,
+      longitude: validLon,
+      accuracy: validAccuracy,
+      emergencyType: effectiveType,
+      assistance: assistanceArray,
+      status: 'REQUESTED',
+      timestamp: Date.now(),
+    });
+    broadcastEvent('NOTIFICATION_CREATED', {
+      id: notifId,
+      title: 'Emergency Request Received',
+      priority: 'CRITICAL',
+      incidentId: incId,
+    });
+
+    // 10. Audit log
     await query(
       `INSERT INTO audit_logs (id, actor, action, entity, metadata) VALUES ($1, $2, $3, $4, $5)`,
       [
@@ -130,13 +182,16 @@ emergencyRouter.post('/request', optionalAuth, async (req: Request, res: Respons
         'emergency_requests',
         JSON.stringify({
           sosId,
+          incId,
           location: effectiveLocation,
           assistance: assistanceArray,
           requesterIp: clientIp,
           hasCoordinates: validLat !== null,
+          accuracy: validAccuracy,
         }),
       ]
     ).catch(() => {});
+
 
     res.status(201).json({
       success: true,
@@ -146,6 +201,9 @@ emergencyRouter.post('/request', optionalAuth, async (req: Request, res: Respons
         requestId: savedRequest.id,
         status: savedRequest.status,
         location: savedRequest.location,
+        latitude: savedRequest.latitude ? parseFloat(savedRequest.latitude) : null,
+        longitude: savedRequest.longitude ? parseFloat(savedRequest.longitude) : null,
+        accuracy: savedRequest.accuracy ? parseFloat(savedRequest.accuracy) : null,
         assistanceNeeded: savedRequest.assistance_requested,
         assignedIncidentId: incId,
         hasCoordinates: validLat !== null,

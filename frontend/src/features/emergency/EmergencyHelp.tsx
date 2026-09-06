@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router';
 import { emergencyApi, locationApi, weatherApi } from '../../api';
+import { useAppStore } from '../../store/useAppStore';
 
 type Step = 'type' | 'location' | 'details' | 'submitted';
 
@@ -53,6 +54,7 @@ function StepIndicator({ current }: { current: Step }) {
 
 export default function EmergencyHelp() {
   const navigate = useNavigate();
+  const { userLocation, setUserLocation } = useAppStore();
   const [step, setStep] = useState<Step>('type');
   const [emergencyType, setEmergencyType] = useState('');
   const [location, setLocation] = useState('');
@@ -66,13 +68,51 @@ export default function EmergencyHelp() {
   // Real-time location & weather states
   const [geoLoading, setGeoLoading] = useState(false);
   const [geoCoords, setGeoCoords] = useState<{ lat: number; lon: number } | null>(null);
+  const [geoAccuracy, setGeoAccuracy] = useState<number | null>(null);
   const [geoError, setGeoError] = useState<string | null>(null);
+  const [createdRequestId, setCreatedRequestId] = useState<string | null>(null);
+  const [createdIncidentId, setCreatedIncidentId] = useState<string | null>(null);
   const [weatherData, setWeatherData] = useState<{
     temperature?: number;
     wind_speed?: number;
     condition?: string;
     icon?: string;
   } | null>(null);
+
+  // Automatically use store GPS coords if available, or trigger automatic detection on mount
+  useEffect(() => {
+    if (userLocation?.status === 'locked' && userLocation.lat && userLocation.lng) {
+      const lat = userLocation.lat;
+      const lon = userLocation.lng;
+      setGeoCoords({ lat, lon });
+      if (userLocation.accuracy) setGeoAccuracy(userLocation.accuracy);
+
+      // Auto reverse-geocode address if location field is empty
+      locationApi.reverseGeocode(lat, lon).then((geoRes) => {
+        const gData = geoRes?.data || geoRes;
+        const address = gData?.formattedAddress || gData?.rawDisplayName || gData?.display_name;
+        if (address) {
+          setLocation((prev) => prev || address);
+        }
+      }).catch((e) => console.warn('Reverse geocoding failed:', e));
+
+      // Auto fetch weather
+      weatherApi.getCurrent(lat, lon).then((weatherRes) => {
+        const wData = weatherRes?.data || weatherRes?.current;
+        if (wData) {
+          setWeatherData({
+            temperature: wData.temperature,
+            wind_speed: wData.windSpeed !== undefined ? wData.windSpeed : wData.wind_speed,
+            condition: wData.condition,
+            icon: wData.icon,
+          });
+        }
+      }).catch((e) => console.warn('Weather fetch failed:', e));
+    } else {
+      // Auto-detect GPS if not yet acquired
+      detectLocation();
+    }
+  }, []);
 
   const toggleAssistance = (id: string) =>
     setAssistance((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
@@ -92,7 +132,16 @@ export default function EmergencyHelp() {
       async (pos) => {
         const lat = pos.coords.latitude;
         const lon = pos.coords.longitude;
+        const acc = pos.coords.accuracy;
         setGeoCoords({ lat, lon });
+        setGeoAccuracy(acc);
+        setUserLocation({
+          lat,
+          lng: lon,
+          accuracy: acc,
+          timestamp: pos.timestamp || Date.now(),
+          status: 'locked',
+        });
         try {
           // Reverse geocode via server proxy
           const geoRes = await locationApi.reverseGeocode(lat, lon);
@@ -142,16 +191,20 @@ export default function EmergencyHelp() {
     setIsSubmitting(true);
     setSubmitError(null);
     try {
-      await emergencyApi.submitRequest({
+      const res = await emergencyApi.submitRequest({
         emergency_type: emergencyType || 'other',
         location_name: location.trim(),
         latitude: geoCoords ? geoCoords.lat : undefined,
         longitude: geoCoords ? geoCoords.lon : undefined,
+        accuracy: geoAccuracy ?? undefined,
         description: details || `Assistance needed: ${assistance.join(', ') || 'Emergency'}`,
         contact_name: name.trim() || undefined,
         contact_phone: phone.trim() || undefined,
         assistance_needed: assistance,
       });
+      const data = res.data?.data || res.data;
+      if (data?.id || data?.requestId) setCreatedRequestId(data.id || data.requestId);
+      if (data?.assignedIncidentId) setCreatedIncidentId(data.assignedIncidentId);
       setStep('submitted');
     } catch (err: any) {
       console.error('Failed to submit emergency request:', err);
@@ -160,6 +213,7 @@ export default function EmergencyHelp() {
       setIsSubmitting(false);
     }
   };
+
 
   return (
     <div className="relative w-full h-full flex flex-col items-center overflow-y-auto bg-[#080b0f]">
@@ -490,14 +544,26 @@ export default function EmergencyHelp() {
                   If this is life-threatening, also call your local emergency number (911 or equivalent) immediately.
                 </div>
               </div>
-              <button
-                onClick={() => navigate('/')}
-                className="font-condensed font-bold text-sm tracking-wide px-6 py-2.5 rounded-lg text-white/40 transition-colors hover:text-white/70 cursor-pointer"
-                style={{ border: '1px solid rgba(255,255,255,0.1)' }}
-              >
-                ← RETURN TO HOME
-              </button>
+              <div className="flex flex-col sm:flex-row gap-3 justify-center mb-6">
+                <button
+                  onClick={() =>
+                    navigate(
+                      `/citizen/sos?requestId=${createdRequestId || ''}&incidentId=${createdIncidentId || ''}`
+                    )
+                  }
+                  className="font-condensed font-bold text-sm tracking-widest px-6 py-3 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 border border-emerald-500/40 transition-colors cursor-pointer flex items-center justify-center gap-2"
+                >
+                  <span>📍</span> TRACK EMERGENCY DISPATCH (LIVE)
+                </button>
+                <button
+                  onClick={() => navigate('/')}
+                  className="font-condensed font-bold text-sm tracking-wide px-6 py-3 rounded-lg text-white/40 transition-colors hover:text-white/70 cursor-pointer border border-white/10"
+                >
+                  ← RETURN TO HOME
+                </button>
+              </div>
             </motion.div>
+
           )}
 
         </AnimatePresence>

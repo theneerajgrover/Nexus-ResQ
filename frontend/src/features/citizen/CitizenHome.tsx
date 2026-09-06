@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router';
 import { motion } from 'framer-motion';
 import { alertsApi, sheltersApi, incidentsApi } from '../../api';
 import OperationalMap, { type MapMarker } from '../../components/map/OperationalMap';
+import { useDeviceLocation } from '../../hooks/useDeviceLocation';
 
 type RiskLevel = 'LOW' | 'MODERATE' | 'HIGH' | 'CRITICAL';
 const riskColors: Record<RiskLevel, string> = { LOW: '#10b981', MODERATE: '#f59e0b', HIGH: '#f97316', CRITICAL: '#dc2626' };
@@ -19,26 +20,20 @@ export default function CitizenHome() {
   const [activeAlertCount, setActiveAlertCount] = useState<number>(0);
   const [shelters, setShelters] = useState<any[]>([]);
   const [incidents, setIncidents] = useState<any[]>([]);
-  const [gpsCoords, setGpsCoords] = useState<{ lat: number; lng: number }>({ lat: 40.7128, lng: -74.006 });
-  const [gpsActive, setGpsActive] = useState<boolean>(false);
   const [lastSync, setLastSync] = useState<Date>(new Date());
   const [syncSecondsAgo, setSyncSecondsAgo] = useState<number>(0);
 
-  // Acquire real device GPS
-  useEffect(() => {
-    if (typeof navigator !== 'undefined' && 'geolocation' in navigator) {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          setGpsCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-          setGpsActive(true);
-        },
-        (err) => {
-          console.warn('Citizen GPS fallback active:', err.message);
-        },
-        { enableHighAccuracy: true, timeout: 8000 }
-      );
-    }
-  }, []);
+  // Automatic high-accuracy device GPS acquisition and backend sync
+  const {
+    coords: gpsCoords,
+    accuracy: gpsAccuracy,
+    timestamp: gpsTimestamp,
+    isGpsLocked,
+    isAcquiring,
+    isDenied,
+    isStale,
+    recenter,
+  } = useDeviceLocation({ autoRequest: true, enableHighAccuracy: true });
 
   // Fetch real alerts, shelters, and incidents from backend
   const loadData = () => {
@@ -87,15 +82,17 @@ export default function CitizenHome() {
   const markers = useMemo<MapMarker[]>(() => {
     const list: MapMarker[] = [];
 
-    // Citizen GPS location
-    list.push({
-      id: 'citizen-location',
-      type: 'citizen',
-      title: 'YOUR LOCATION',
-      lat: gpsCoords.lat,
-      lng: gpsCoords.lng,
-      details: gpsActive ? 'Real Device GPS Fix' : 'Default Coordinate Baseline',
-    });
+    // Real device GPS location marker only when locked
+    if (gpsCoords && isGpsLocked) {
+      list.push({
+        id: 'citizen-location',
+        type: 'citizen',
+        title: 'YOUR REAL-TIME LOCATION',
+        lat: gpsCoords.lat,
+        lng: gpsCoords.lng,
+        details: `Live Device GPS Fix · Accuracy: ±${Math.round(gpsAccuracy || 0)}m`,
+      });
+    }
 
     // Real shelters
     shelters.forEach((s) => {
@@ -131,11 +128,11 @@ export default function CitizenHome() {
     });
 
     return list;
-  }, [gpsCoords, gpsActive, shelters, incidents]);
+  }, [gpsCoords, isGpsLocked, gpsAccuracy, shelters, incidents]);
 
-  // Find nearest shelter for Safe Route calculation
+  // Find nearest shelter for Safe Route calculation using real GPS position
   const nearestShelter = useMemo(() => {
-    if (!shelters.length) return null;
+    if (!shelters.length || !gpsCoords) return null;
     let closest: any = null;
     let minDist = Infinity;
     shelters.forEach((s) => {
@@ -162,18 +159,11 @@ export default function CitizenHome() {
       {/* Left — spatial operational map */}
       <div className="flex-1 relative">
         <OperationalMap
-          center={gpsCoords}
-          zoom={13}
+          center={gpsCoords || undefined}
+          zoom={isGpsLocked ? 14 : 12}
           markers={markers}
           safeRouteDestination={nearestShelter}
-          onRecenter={() => {
-            if (navigator.geolocation) {
-              navigator.geolocation.getCurrentPosition((pos) => {
-                setGpsCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-                setGpsActive(true);
-              });
-            }
-          }}
+          onRecenter={recenter}
         />
 
         {/* Risk overlay badge */}
@@ -183,14 +173,22 @@ export default function CitizenHome() {
         >
           <motion.div
             className="w-2.5 h-2.5 rounded-full"
-            style={{ background: riskColor }}
+            style={{ background: isDenied ? '#ef4444' : isAcquiring ? '#06b6d4' : riskColor }}
             animate={{ opacity: [1, 0.4, 1] }}
             transition={{ duration: 1.8, repeat: Infinity }}
           />
           <div>
             <div className="font-condensed font-black text-sm tracking-widest" style={{ color: riskColor }}>{risk} RISK</div>
             <div className="font-mono text-[10px] text-white/50">
-              {gpsActive ? 'LIVE GPS ACTIVE' : 'COORDINATE BASELINE'} · SYNCED {syncSecondsAgo}S AGO
+              {isAcquiring
+                ? 'ACQUIRING DEVICE GPS...'
+                : isDenied
+                ? 'LOCATION PERMISSION REQUIRED'
+                : isGpsLocked && gpsCoords
+                ? `LIVE GPS ACTIVE (±${Math.round(gpsAccuracy || 0)}M) · SYNCED ${syncSecondsAgo}S AGO`
+                : isStale
+                ? `GPS SIGNAL STALE · SYNCED ${syncSecondsAgo}S AGO`
+                : `AWAITING GPS FIX · SYNCED ${syncSecondsAgo}S AGO`}
             </div>
           </div>
         </div>
@@ -210,6 +208,23 @@ export default function CitizenHome() {
           <div className="font-condensed font-black text-4xl leading-none text-white mb-1">AM I</div>
           <div className="font-condensed font-black text-4xl leading-none mb-3" style={{ color: riskColor }}>SAFE?</div>
           <p className="font-mono text-xs leading-relaxed text-white/50">{riskMessages[risk]}</p>
+          {isDenied && (
+            <div className="mt-3 p-2.5 rounded-lg font-mono text-[11px] leading-relaxed" style={{ background: 'rgba(239,68,68,0.1)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.25)' }}>
+              ⚠️ Location permission is required to determine your current position.
+            </div>
+          )}
+          {isAcquiring && (
+            <div className="mt-3 p-2 rounded-lg font-mono text-[11px] text-cyan-400 flex items-center gap-2" style={{ background: 'rgba(6,182,212,0.08)', border: '1px solid rgba(6,182,212,0.2)' }}>
+              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
+              Acquiring device GPS fix...
+            </div>
+          )}
+          {isGpsLocked && gpsCoords && (
+            <div className="mt-3 flex items-center justify-between font-mono text-[10px] text-white/40">
+              <span>GPS: {gpsCoords.lat.toFixed(4)}°, {gpsCoords.lng.toFixed(4)}°</span>
+              {gpsAccuracy && <span>±{Math.round(gpsAccuracy)}m</span>}
+            </div>
+          )}
         </div>
 
         {/* Primary emergency action */}

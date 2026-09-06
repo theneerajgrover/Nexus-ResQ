@@ -1,17 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { emergencyApi, locationApi } from '../../api';
+import { useSearchParams } from 'react-router';
+import { emergencyApi, locationApi, trackingApi } from '../../api';
+import OperationalMap, { MapMarker } from '../../components/map/OperationalMap';
 
 type Step = 'start' | 'location' | 'info' | 'submitted' | 'journey';
-
-const journeySteps = [
-  { id: 'received', label: 'REQUEST RECEIVED', status: 'done' },
-  { id: 'locating', label: 'HELP LOCATING', status: 'done' },
-  { id: 'assigned', label: 'RESPONDER ASSIGNED', status: 'active' },
-  { id: 'enroute', label: 'RESPONDER EN ROUTE', status: 'pending' },
-  { id: 'arriving', label: 'ASSISTANCE ARRIVING', status: 'pending' },
-  { id: 'resolved', label: 'RESOLVED', status: 'pending' },
-];
 
 interface LocationState {
   lat: number;
@@ -22,19 +15,30 @@ interface LocationState {
 }
 
 export default function SOSFlow() {
-  const [step, setStep] = useState<Step>('start');
+  const [searchParams] = useSearchParams();
+  const urlReqId = searchParams.get('requestId');
+  const urlIncId = searchParams.get('incidentId');
+
+  const [step, setStep] = useState<Step>(urlReqId || urlIncId ? 'journey' : 'start');
   const [emergency, setEmergency] = useState('MEDICAL');
   const [assistanceNeeded, setAssistanceNeeded] = useState<string[]>(['RESCUE']);
   const [description, setDescription] = useState('');
-  const [requestId, setRequestId] = useState('SOS-' + Math.floor(Math.random() * 90000 + 10000));
+  const [requestId, setRequestId] = useState(urlReqId || 'SOS-' + Math.floor(Math.random() * 90000 + 10000));
+  const [incidentId, setIncidentId] = useState<string | null>(urlIncId || null);
   const [locationData, setLocationData] = useState<LocationState>({
-    lat: 40.7128,
-    lng: -74.0060,
+    lat: 28.6139,
+    lng: 77.2090,
     accuracy: '±15m',
     address: 'Determining location...',
     isGps: false,
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (urlReqId) setRequestId(urlReqId);
+    if (urlIncId) setIncidentId(urlIncId);
+    if (urlReqId || urlIncId) setStep('journey');
+  }, [urlReqId, urlIncId]);
 
   const handleSendSOS = async () => {
     setIsSubmitting(true);
@@ -47,8 +51,13 @@ export default function SOSFlow() {
         longitude: locationData.lng,
         description: description || `CRITICAL SOS: ${emergency}. Assistance requested: ${assistanceNeeded.join(', ')}`,
       });
-      if (res.data?.id) {
-        setRequestId(`SOS-${res.data.id.slice(0, 5).toUpperCase()}`);
+      const data = res.data?.data || res.data;
+      if (data?.id || data?.requestId) {
+        const id = data.id || data.requestId;
+        setRequestId(id);
+      }
+      if (data?.assignedIncidentId) {
+        setIncidentId(data.assignedIncidentId);
       }
     } catch (err) {
       console.error('Failed to dispatch SOS to backend:', err);
@@ -57,6 +66,7 @@ export default function SOSFlow() {
       setStep('submitted');
     }
   };
+
 
   return (
     <div className="w-full h-full flex items-center justify-center p-6">
@@ -490,106 +500,386 @@ function SubmittedStep({ requestId, onContinue }: { requestId: string; onContinu
   );
 }
 
-function JourneyView({ requestId, accuracy }: { requestId: string; accuracy: string }) {
-  const activeIndex = 2;
+interface JourneyViewProps {
+  requestId: string;
+  incidentId?: string | null;
+  accuracy?: string;
+}
+
+function JourneyView({ requestId, incidentId: initialIncidentId, accuracy }: JourneyViewProps) {
+  const [trackingData, setTrackingData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [lastSyncTime, setLastSyncTime] = useState<number>(Date.now());
+  const [syncedSecondsAgo, setSyncedSecondsAgo] = useState(0);
+  const [routeUpdatedAlert, setRouteUpdatedAlert] = useState<{ show: boolean; message: string } | null>(null);
+
+  const fetchTracking = async () => {
+    try {
+      let res: any;
+      if (initialIncidentId) {
+        res = await trackingApi.getTracking(initialIncidentId);
+      } else {
+        res = await trackingApi.getTrackingByRequest(requestId);
+      }
+
+      if (res.data?.success && res.data?.data) {
+        setTrackingData(res.data.data);
+        setLastSyncTime(Date.now());
+      }
+    } catch (err: any) {
+      console.warn('[JourneyView] Tracking query error:', err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Initial fetch and 15s refresh
+  useEffect(() => {
+    fetchTracking();
+    const interval = setInterval(fetchTracking, 15000);
+    return () => clearInterval(interval);
+  }, [requestId, initialIncidentId]);
+
+  // Synced X seconds ago counter
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const diff = Math.floor((Date.now() - lastSyncTime) / 1000);
+      setSyncedSecondsAgo(diff);
+      if (diff >= 30) {
+        fetchTracking();
+      }
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [lastSyncTime]);
+
+  // Real-time SSE synchronization
+  useEffect(() => {
+    const eventSource = new EventSource('/api/events');
+
+    eventSource.onmessage = (e) => {
+      try {
+        const payload = JSON.parse(e.data);
+        const { type, payload: data } = payload;
+
+        if (type === 'RESPONDER_LOCATION_UPDATED') {
+          // Update live vehicle coordinates
+          setTrackingData((prev: any) => {
+            if (!prev) return prev;
+            return {
+              ...prev,
+              responder: prev.responder
+                ? {
+                    ...prev.responder,
+                    latitude: data.latitude,
+                    longitude: data.longitude,
+                    heading: data.heading,
+                    speed: data.speed,
+                  }
+                : {
+                    id: data.responderId,
+                    latitude: data.latitude,
+                    longitude: data.longitude,
+                  },
+            };
+          });
+          setLastSyncTime(Date.now());
+        } else if (type === 'INCIDENT_STATUS_CHANGED') {
+          // Update lifecycle step
+          setTrackingData((prev: any) => {
+            if (!prev) return prev;
+            const stepIdx = data.stepIndex !== undefined ? data.stepIndex : prev.lifecycle?.currentStepIndex;
+            return {
+              ...prev,
+              incident: { ...prev.incident, status: data.newStatus },
+              lifecycle: {
+                ...prev.lifecycle,
+                currentStatus: data.newStatus,
+                currentStepIndex: stepIdx,
+                steps: prev.lifecycle?.steps?.map((s: any, idx: number) => ({
+                  ...s,
+                  isCompleted: stepIdx > idx,
+                  isCurrent: stepIdx === idx,
+                })),
+              },
+            };
+          });
+          setLastSyncTime(Date.now());
+        } else if (type === 'ROUTE_UPDATED') {
+          // Dynamic re-routing detected!
+          if (data.activeRoute) {
+            setTrackingData((prev: any) => {
+              if (!prev) return prev;
+              return {
+                ...prev,
+                activeRoute: data.activeRoute,
+              };
+            });
+            setRouteUpdatedAlert({
+              show: true,
+              message: data.reason || 'ROUTE UPDATED — SAFER ALTERNATIVE SELECTED',
+            });
+            setLastSyncTime(Date.now());
+            setTimeout(() => setRouteUpdatedAlert(null), 10000);
+          }
+        }
+      } catch (err) {
+        console.warn('[JourneyView] SSE parse warning:', err);
+      }
+    };
+
+    return () => {
+      eventSource.close();
+    };
+  }, []);
+
+  // Map markers construction
+  const mapMarkers: MapMarker[] = [];
+  const citizenLat = trackingData?.citizen?.latitude || trackingData?.incident?.latitude;
+  const citizenLng = trackingData?.citizen?.longitude || trackingData?.incident?.longitude;
+
+  if (citizenLat && citizenLng) {
+    mapMarkers.push({
+      id: 'citizen-location',
+      type: 'citizen',
+      title: 'Emergency Origin (You)',
+      lat: citizenLat,
+      lng: citizenLng,
+      details: trackingData?.citizen?.location || 'Emergency Request Location',
+      status: 'AWAITING TEAM',
+    });
+  }
+
+  if (trackingData?.responder?.latitude && trackingData?.responder?.longitude) {
+    mapMarkers.push({
+      id: 'responder-vehicle',
+      type: 'responder',
+      title: `${trackingData.responder.name || 'Emergency Responder'} (${trackingData.responder.callsign || 'UNIT'})`,
+      lat: trackingData.responder.latitude,
+      lng: trackingData.responder.longitude,
+      details: `Operational Status: ${trackingData.responder.status || 'EN ROUTE'}`,
+      status: trackingData.responder.status || 'ACTIVE',
+    });
+  }
+
+  const activeRoute = trackingData?.activeRoute;
+  const lifecycle = trackingData?.lifecycle;
+  const currentStepIndex = lifecycle?.currentStepIndex !== undefined ? lifecycle.currentStepIndex : 0;
+  const currentStatus = lifecycle?.currentStatus || 'REQUESTED';
+
+  const routeSafetyStatus = activeRoute?.safetyStatus || 'SAFE';
+  const safetyColor =
+    routeSafetyStatus === 'BLOCKED' || routeSafetyStatus === 'HIGH_RISK'
+      ? '#dc2626'
+      : routeSafetyStatus === 'CAUTION'
+      ? '#f59e0b'
+      : '#10b981';
 
   return (
     <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      className="max-w-sm w-full"
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="w-full max-w-4xl flex flex-col gap-6"
     >
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <div className="font-condensed font-black text-2xl text-white">RESPONSE IN PROGRESS</div>
-          <div className="font-mono text-xs" style={{ color: '#10b981' }}>ID: {requestId}</div>
-        </div>
-        <div className="flex items-center gap-2 font-mono text-xs" style={{ color: '#10b981' }}>
-          <span className="w-1.5 h-1.5 rounded-full live-dot" style={{ background: '#10b981' }} />
-          LIVE
-        </div>
-      </div>
-
-      <div className="relative mb-6">
-        {journeySteps.map((step, i) => {
-          const isDone = i < activeIndex;
-          const isActive = i === activeIndex;
-          const isPending = i > activeIndex;
-          const color = isDone ? '#10b981' : isActive ? '#f59e0b' : 'rgba(255,255,255,0.15)';
-
-          return (
-            <div key={step.id} className="flex items-start gap-4 mb-0">
-              <div className="flex flex-col items-center">
-                <motion.div
-                  className="w-8 h-8 rounded-full flex items-center justify-center z-10 shrink-0"
-                  style={{
-                    background: isDone ? 'rgba(16,185,129,0.2)' : isActive ? 'rgba(245,158,11,0.2)' : 'rgba(255,255,255,0.05)',
-                    border: `2px solid ${color}`,
-                    boxShadow: isActive ? `0 0 20px ${color}44` : 'none',
-                  }}
-                  animate={isActive ? { boxShadow: ['0 0 20px rgba(245,158,11,0.4)', '0 0 40px rgba(245,158,11,0.2)', '0 0 20px rgba(245,158,11,0.4)'] } : {}}
-                  transition={{ duration: 2, repeat: Infinity }}
-                >
-                  {isDone ? (
-                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                      <path d="M2.5 7L5.5 10L11.5 4" stroke="#10b981" strokeWidth="2" strokeLinecap="round" />
-                    </svg>
-                  ) : isActive ? (
-                    <div className="w-2 h-2 rounded-full" style={{ background: '#f59e0b' }} />
-                  ) : (
-                    <div className="w-2 h-2 rounded-full" style={{ background: 'rgba(255,255,255,0.2)' }} />
-                  )}
-                </motion.div>
-                {i < journeySteps.length - 1 && (
-                  <div
-                    className="w-0.5 flex-1 my-1"
-                    style={{
-                      height: '32px',
-                      background: isDone ? '#10b981' : 'rgba(255,255,255,0.08)',
-                    }}
-                  />
-                )}
-              </div>
-              <div className="pt-1.5 pb-5">
-                <div
-                  className="font-condensed font-bold text-sm tracking-widest"
-                  style={{ color: isDone ? '#10b981' : isActive ? '#f59e0b' : 'rgba(255,255,255,0.25)' }}
-                >
-                  {step.label}
+      {/* Dynamic Re-Routing Alert Banner */}
+      <AnimatePresence>
+        {routeUpdatedAlert?.show && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            className="p-4 rounded-xl border flex items-center justify-between gap-4 shadow-2xl"
+            style={{
+              background: 'rgba(220, 38, 38, 0.15)',
+              borderColor: '#dc2626',
+              boxShadow: '0 0 30px rgba(220, 38, 38, 0.3)',
+            }}
+          >
+            <div className="flex items-center gap-3">
+              <span className="text-2xl animate-bounce">⚠️</span>
+              <div>
+                <div className="font-condensed font-black text-sm tracking-wider text-rose-400">
+                  ROUTE UPDATED — SAFER ALTERNATIVE SELECTED
                 </div>
-                {isActive && (
-                  <div className="font-mono text-xs text-white/40 mt-0.5">Responder Unit R-14 dispatched · ETA 8 min</div>
-                )}
+                <div className="font-mono text-xs text-white/70">
+                  {routeUpdatedAlert.message} · Active navigation dynamically switched to avoid risk corridor.
+                </div>
               </div>
             </div>
-          );
-        })}
-      </div>
+            <button
+              onClick={() => setRouteUpdatedAlert(null)}
+              className="px-3 py-1 rounded font-mono text-xs bg-white/10 hover:bg-white/20 text-white/70 transition-colors"
+            >
+              DISMISS
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-      <div className="grid grid-cols-2 gap-3 mb-4">
-        {[
-          { label: 'REQUEST ID', value: requestId, color: '#06b6d4' },
-          { label: 'ACCURACY', value: accuracy, color: '#10b981' },
-          { label: 'RESPONSE UNIT', value: 'R-14 ALPHA', color: '#f59e0b' },
-          { label: 'ETA', value: '~8 minutes', color: '#f59e0b' },
-        ].map((item) => (
-          <div
-            key={item.label}
-            className="p-3 rounded-lg"
-            style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}
-          >
-            <div className="font-mono text-xs text-white/30 mb-1">{item.label}</div>
-            <div className="font-condensed font-bold text-sm" style={{ color: item.color }}>{item.value}</div>
+      {/* Main Header & Sync Status */}
+      <div className="glass p-5 rounded-2xl border border-white/10 flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-3 mb-1">
+            <span
+              className="px-2.5 py-0.5 rounded text-[11px] font-mono font-bold tracking-wider"
+              style={{ background: 'rgba(16,185,129,0.2)', color: '#10b981', border: '1px solid rgba(16,185,129,0.4)' }}
+            >
+              STEP {currentStepIndex + 1} OF 8: {currentStatus}
+            </span>
+            <span className="font-mono text-xs text-white/40">ID: {requestId}</span>
           </div>
-        ))}
+          <h1 className="font-condensed font-black text-2xl tracking-wide text-white">
+            LIVE EMERGENCY RESPONSE TRACKING
+          </h1>
+        </div>
+
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2 font-mono text-xs text-white/50">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+            <span className="text-emerald-400 font-bold">Synced {syncedSecondsAgo}s ago</span>
+          </div>
+          <button
+            onClick={fetchTracking}
+            title="Refresh telemetry"
+            className="p-2 rounded-lg bg-white/5 hover:bg-white/15 text-white/60 hover:text-white border border-white/10 transition-colors"
+          >
+            🔄
+          </button>
+        </div>
       </div>
 
-      <button
-        className="w-full py-3 rounded-lg font-condensed font-semibold text-sm tracking-widest"
-        style={{ background: 'rgba(220,38,38,0.1)', border: '1px solid rgba(220,38,38,0.3)', color: '#dc2626' }}
-      >
-        EMERGENCY CALL — 911
-      </button>
+      {/* Map & Operational Tracking Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        {/* Left Column: Live Tactical Map */}
+        <div className="lg:col-span-7 flex flex-col gap-4">
+          <div className="relative h-[380px] w-full rounded-2xl overflow-hidden border border-white/10 shadow-2xl">
+            <OperationalMap
+              center={citizenLat && citizenLng ? { lat: citizenLat, lng: citizenLng } : undefined}
+              zoom={14}
+              markers={mapMarkers}
+              activeRouteCoordinates={activeRoute?.coordinates}
+              activeRoutePolyline={activeRoute?.polyline}
+              routeSafetyStatus={activeRoute?.safetyStatus || 'SAFE'}
+              className="w-full h-full"
+            />
+
+            {/* Floating Live Route Indicator */}
+            {activeRoute && (
+              <div className="absolute bottom-4 left-4 z-20 glass px-3 py-2 rounded-xl border border-white/10 flex items-center gap-3">
+                <span className="w-2.5 h-2.5 rounded-full" style={{ background: safetyColor }} />
+                <div className="font-mono text-xs">
+                  <span className="font-bold text-white">{activeRoute.label}</span>
+                  <span className="text-white/40 ml-2">({activeRoute.safetyStatus})</span>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Quick Metrics Bar */}
+          <div className="grid grid-cols-4 gap-2 text-center font-mono">
+            <div className="p-2.5 rounded-xl glass border border-white/5">
+              <div className="text-[10px] text-white/40 mb-0.5">DISTANCE</div>
+              <div className="font-condensed font-black text-sm text-cyan-400">
+                {activeRoute?.distanceFormatted || 'Calculating...'}
+              </div>
+            </div>
+            <div className="p-2.5 rounded-xl glass border border-white/5">
+              <div className="text-[10px] text-white/40 mb-0.5">ETA</div>
+              <div className="font-condensed font-black text-sm text-emerald-400">
+                {activeRoute?.etaFormatted || '~5-8 mins'}
+              </div>
+            </div>
+            <div className="p-2.5 rounded-xl glass border border-white/5">
+              <div className="text-[10px] text-white/40 mb-0.5">CORRIDOR RISK</div>
+              <div className="font-condensed font-black text-sm" style={{ color: safetyColor }}>
+                {activeRoute?.safetyStatus || 'VERIFIED SAFE'}
+              </div>
+            </div>
+            <div className="p-2.5 rounded-xl glass border border-white/5">
+              <div className="text-[10px] text-white/40 mb-0.5">UNIT</div>
+              <div className="font-condensed font-black text-sm text-amber-400 truncate">
+                {trackingData?.responder?.name || 'Assigned Post'}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Right Column: 8-Step Operational Lifecycle Timeline */}
+        <div className="lg:col-span-5 flex flex-col gap-4">
+          <div className="glass p-5 rounded-2xl border border-white/10 flex flex-col h-full">
+            <div className="font-mono text-xs tracking-wider text-white/40 mb-4 flex items-center justify-between">
+              <span>OPERATIONAL LIFECYCLE</span>
+              <span className="text-emerald-400 font-bold">{currentStepIndex + 1}/8 COMPLETE</span>
+            </div>
+
+            <div className="space-y-3 flex-1 overflow-y-auto pr-1">
+              {(lifecycle?.steps || [
+                { step: 'REQUESTED', label: 'Emergency Requested', description: 'Citizen SOS registered.' },
+                { step: 'ACCEPTED', label: 'Incident Accepted', description: 'Central dispatch verified incident.' },
+                { step: 'ASSIGNED', label: 'Responder Assigned', description: 'Rescue unit allocated.' },
+                { step: 'DEPARTED', label: 'Vehicle Departed', description: 'Unit departed base station.' },
+                { step: 'ON_THE_WAY', label: 'En Route to Scene', description: 'Navigating safest corridor.' },
+                { step: 'NEARBY', label: 'Vehicle Nearby', description: 'Team is within 500m.' },
+                { step: 'ARRIVED', label: 'Arrived on Scene', description: 'Physical contact at site.' },
+                { step: 'COMPLETED', label: 'Incident Resolved', description: 'Operation archived.' },
+              ]).map((s: any, idx: number) => {
+                const isCompleted = currentStepIndex > idx;
+                const isCurrent = currentStepIndex === idx;
+                const isPending = currentStepIndex < idx;
+
+                return (
+                  <div
+                    key={s.step || idx}
+                    className={`flex items-start gap-3 p-2.5 rounded-xl transition-all ${
+                      isCurrent
+                        ? 'bg-amber-500/10 border border-amber-500/30'
+                        : isCompleted
+                        ? 'bg-emerald-500/5 border border-emerald-500/15'
+                        : 'opacity-40 border border-transparent'
+                    }`}
+                  >
+                    <div className="pt-0.5">
+                      <div
+                        className={`w-6 h-6 rounded-full flex items-center justify-center font-mono text-[10px] font-bold ${
+                          isCompleted
+                            ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/50'
+                            : isCurrent
+                            ? 'bg-amber-500/20 text-amber-400 border border-amber-500 animate-pulse'
+                            : 'bg-white/5 text-white/30 border border-white/10'
+                        }`}
+                      >
+                        {isCompleted ? '✓' : idx + 1}
+                      </div>
+                    </div>
+                    <div>
+                      <div
+                        className={`font-condensed font-bold text-sm tracking-wide ${
+                          isCompleted ? 'text-emerald-400' : isCurrent ? 'text-white' : 'text-white/40'
+                        }`}
+                      >
+                        {s.label}
+                      </div>
+                      <div className="font-mono text-[11px] text-white/50 leading-tight">
+                        {s.description}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Emergency Hotlines */}
+            <div className="mt-4 pt-4 border-t border-white/10">
+              <a
+                href="tel:911"
+                className="w-full py-3 rounded-xl font-condensed font-bold text-sm tracking-widest bg-rose-500/20 hover:bg-rose-500/30 text-rose-400 border border-rose-500/40 flex items-center justify-center gap-2 transition-colors cursor-pointer"
+              >
+                <span>📞</span> DIRECT EMERGENCY DISPATCH
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
     </motion.div>
   );
 }
+

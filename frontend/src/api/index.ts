@@ -51,6 +51,7 @@ export const emergencyApi = {
     location_name?: string;
     latitude?: number;
     longitude?: number;
+    accuracy?: number;
     details?: string;
     description?: string;
     name?: string;
@@ -73,6 +74,9 @@ export const sheltersApi = {
 // ── Evacuation Routes Service ────────────────────────────────
 export const routesApi = {
   getAll: () => apiClient.get('/evacuation-routes'),
+  calculate: (data: { originLat: number; originLng: number; destinationLat: number; destinationLng: number; incidentId?: string }) =>
+    apiClient.post('/evacuation-routes/calculate', data),
+  getActive: (incidentId: string) => apiClient.get(`/evacuation-routes/active/${incidentId}`),
 };
 
 // ── Alerts & Warnings Service ────────────────────────────────
@@ -145,5 +149,36 @@ export const orchestratorApi = {
   getStatus: () => apiClient.get('/orchestrator/status'),
   getExecutions: (incidentId?: string) => apiClient.get(`/orchestrator/executions${incidentId ? `?incidentId=${incidentId}` : ''}`),
 };
+
+// ── Live Tracking & Operational Lifecycle Service ───────────
+export const trackingApi = {
+  sendLocation: (data: {
+    entityType: 'responder' | 'citizen' | 'ambulance' | 'vehicle';
+    entityId: string;
+    incidentId?: string;
+    requestId?: string;
+    latitude: number;
+    longitude: number;
+    accuracy?: number;
+    heading?: number;
+    speed?: number;
+  }) => apiClient.post('/tracking/location', data),
+
+  updateStatus: (data: {
+    incidentId?: string;
+    requestId?: string;
+    responderId?: string;
+    status: string;
+    actor: string;
+    notes?: string;
+  }) => apiClient.post('/tracking/status', data),
+
+  getTracking: (incidentId: string) => apiClient.get(`/tracking/${incidentId}`),
+  getTrackingByRequest: (requestId: string) => apiClient.get(`/tracking/request/${requestId}`),
+  getLocation: (entityType: string, entityId: string) => apiClient.get(`/tracking/location/${entityType}/${entityId}`),
+  triggerReroute: (incidentId: string, originLat?: number, originLng?: number) =>
+    apiClient.post(`/tracking/reroute/${incidentId}`, { originLat, originLng }),
+};
+
 
 

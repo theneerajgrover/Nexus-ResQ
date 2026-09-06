@@ -1,116 +1,80 @@
 import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useLocation } from 'react-router';
-import { respondersApi } from '../../api';
+import { respondersApi, trackingApi } from '../../api';
+import OperationalMap, { MapMarker } from '../../components/map/OperationalMap';
 
-type MissionState = 'AVAILABLE' | 'ASSIGNED' | 'ACCEPTED' | 'EN ROUTE' | 'ON SCENE' | 'ASSISTING' | 'COMPLETED';
+type MissionState =
+  | 'REQUESTED'
+  | 'ACCEPTED'
+  | 'ASSIGNED'
+  | 'DEPARTED'
+  | 'ON_THE_WAY'
+  | 'NEARBY'
+  | 'ARRIVED'
+  | 'COMPLETED';
+
 type NavSection = 'mission' | 'incident' | 'navigation' | 'resources' | 'alerts';
 
-const stateFlow: MissionState[] = ['AVAILABLE', 'ASSIGNED', 'ACCEPTED', 'EN ROUTE', 'ON SCENE', 'ASSISTING', 'COMPLETED'];
+const stateFlow: MissionState[] = [
+  'REQUESTED',
+  'ACCEPTED',
+  'ASSIGNED',
+  'DEPARTED',
+  'ON_THE_WAY',
+  'NEARBY',
+  'ARRIVED',
+  'COMPLETED',
+];
+
 const stateColors: Record<MissionState, string> = {
-  AVAILABLE: '#10b981',
-  ASSIGNED: '#f59e0b',
+  REQUESTED: '#06b6d4',
   ACCEPTED: '#f59e0b',
-  'EN ROUTE': '#06b6d4',
-  'ON SCENE': '#f97316',
-  ASSISTING: '#dc2626',
+  ASSIGNED: '#f59e0b',
+  DEPARTED: '#3b82f6',
+  ON_THE_WAY: '#06b6d4',
+  NEARBY: '#f97316',
+  ARRIVED: '#10b981',
   COMPLETED: '#6b7280',
 };
-const stateNextLabel: Partial<Record<MissionState, string>> = {
-  ASSIGNED: 'ACCEPT MISSION',
-  ACCEPTED: 'MARK EN ROUTE',
-  'EN ROUTE': 'ARRIVED ON SCENE',
-  'ON SCENE': 'BEGIN ASSISTING',
-  ASSISTING: 'MARK COMPLETED',
+
+const stateNextAction: Partial<Record<MissionState, { label: string; target: MissionState }>> = {
+  REQUESTED: { label: 'ACCEPT MISSION', target: 'ACCEPTED' },
+  ASSIGNED: { label: 'ACCEPT MISSION', target: 'ACCEPTED' },
+  ACCEPTED: { label: 'DEPART STATION', target: 'DEPARTED' },
+  DEPARTED: { label: 'MARK ON THE WAY', target: 'ON_THE_WAY' },
+  ON_THE_WAY: { label: 'MARK NEARBY (<500M)', target: 'NEARBY' },
+  NEARBY: { label: 'ARRIVED ON SCENE', target: 'ARRIVED' },
+  ARRIVED: { label: 'COMPLETE MISSION', target: 'COMPLETED' },
 };
 
-// ── Spatial mission map ───────────────────────────────────────────────────────
-function MissionMap({ status }: { status: MissionState }) {
-  const ref = useRef<HTMLCanvasElement>(null);
-  useEffect(() => {
-    const c = ref.current;
-    if (!c) return;
-    const ctx = c.getContext('2d');
-    if (!ctx) return;
-    c.width = c.offsetWidth; c.height = c.offsetHeight;
-    const W = c.width, H = c.height;
-
-    ctx.strokeStyle = 'rgba(255,255,255,0.03)';
-    for (let x = 0; x < W; x += 40) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); }
-    for (let y = 0; y < H; y += 40) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
-
-    // Risk zone
-    const g = ctx.createRadialGradient(W * 0.55, H * 0.35, 0, W * 0.55, H * 0.35, 110);
-    g.addColorStop(0, 'rgba(220,38,38,0.12)'); g.addColorStop(1, 'rgba(220,38,38,0)');
-    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(W * 0.55, H * 0.35, 110, 0, Math.PI * 2); ctx.fill();
-
-    // Roads
-    ctx.strokeStyle = 'rgba(255,255,255,0.07)'; ctx.lineWidth = 6;
-    ctx.beginPath(); ctx.moveTo(0, H * 0.65); ctx.lineTo(W, H * 0.65); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(W * 0.4, 0); ctx.lineTo(W * 0.4, H); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(W * 0.6, 0); ctx.lineTo(W * 0.6, H); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(0, H * 0.35); ctx.lineTo(W, H * 0.35); ctx.stroke();
-
-    // Blocked route (red)
-    ctx.strokeStyle = 'rgba(220,38,38,0.5)'; ctx.lineWidth = 3; ctx.setLineDash([6, 4]);
-    ctx.beginPath(); ctx.moveTo(W * 0.4, H * 0.65); ctx.lineTo(W * 0.4, H * 0.35); ctx.stroke();
-    ctx.setLineDash([]);
-
-    // Safe route (green dashed)
-    const atScene = ['ON SCENE', 'ASSISTING', 'COMPLETED'].includes(status);
-    ctx.strokeStyle = '#10b981'; ctx.lineWidth = 3; ctx.setLineDash([10, 5]);
-    ctx.beginPath();
-    ctx.moveTo(W * 0.25, H * 0.75);
-    ctx.lineTo(W * 0.25, H * 0.65);
-    ctx.lineTo(W * 0.6, H * 0.65);
-    ctx.lineTo(W * 0.6, H * 0.35);
-    ctx.stroke();
-    ctx.setLineDash([]);
-
-    // Gas perimeter
-    ctx.strokeStyle = 'rgba(245,158,11,0.5)'; ctx.lineWidth = 1.5; ctx.setLineDash([4, 4]);
-    ctx.beginPath(); ctx.arc(W * 0.55, H * 0.35, 70, 0, Math.PI * 2); ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.fillStyle = 'rgba(245,158,11,0.6)'; ctx.font = '10px monospace';
-    ctx.fillText('GAS PERIMETER', W * 0.6 + 4, H * 0.35 - 60);
-
-    // Incident marker
-    ctx.beginPath(); ctx.arc(W * 0.6, H * 0.35, 10, 0, Math.PI * 2);
-    ctx.fillStyle = '#dc2626'; ctx.fill();
-    ctx.fillStyle = 'rgba(220,38,38,0.7)'; ctx.font = '11px monospace';
-    ctx.fillText('INC-2849', W * 0.6 + 14, H * 0.35 + 4);
-
-    // My position
-    const myX = atScene ? W * 0.6 : W * 0.25;
-    const myY = atScene ? H * 0.35 : H * 0.75;
-    ctx.beginPath(); ctx.arc(myX, myY, 8, 0, Math.PI * 2);
-    ctx.fillStyle = '#f59e0b'; ctx.fill();
-    ctx.strokeStyle = 'rgba(245,158,11,0.5)'; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.arc(myX, myY, 16, 0, Math.PI * 2); ctx.stroke();
-    ctx.fillStyle = '#f59e0b'; ctx.font = '10px monospace';
-    ctx.fillText('YOU', myX + 19, myY + 4);
-
-    // Team member on scene
-    ctx.beginPath(); ctx.moveTo(W * 0.62, H * 0.33); ctx.lineTo(W * 0.66, H * 0.4); ctx.lineTo(W * 0.58, H * 0.4); ctx.closePath();
-    ctx.fillStyle = '#06b6d4'; ctx.fill();
-    ctx.fillStyle = 'rgba(6,182,212,0.7)'; ctx.font = '10px monospace';
-    ctx.fillText('R3', W * 0.67, H * 0.36);
-
-    ctx.fillStyle = 'rgba(220,38,38,0.6)';
-    ctx.fillText('✕ BLOCKED', W * 0.25, H * 0.5);
-  }, [status]);
-  return <canvas ref={ref} className="w-full h-full" />;
-}
-
 // ── Mission section ───────────────────────────────────────────────────────────
-function MissionSection({ status, onStatusChange }: { status: MissionState; onStatusChange: (s: MissionState) => void }) {
+function MissionSection({
+  status,
+  mission,
+  activeRoute,
+  onStatusChange,
+  isGpsSharing,
+  onToggleGps,
+  currentCoords,
+  onSimulateMove,
+}: {
+  status: MissionState;
+  mission: any;
+  activeRoute: any;
+  onStatusChange: (s: MissionState) => void;
+  isGpsSharing: boolean;
+  onToggleGps: () => void;
+  currentCoords: { lat: number; lng: number; accuracy?: number } | null;
+  onSimulateMove: () => void;
+}) {
   const color = stateColors[status];
   const idx = stateFlow.indexOf(status);
-  const next = stateFlow[idx + 1] as MissionState | undefined;
+  const nextAction = stateNextAction[status];
 
   return (
     <div className="flex flex-col gap-4 h-full">
-      {/* Status flow */}
+      {/* Status flow progression */}
       <div className="flex items-center gap-1.5 flex-wrap">
         {stateFlow.map((s, i) => (
           <div key={s} className="flex items-center gap-1.5">
@@ -123,7 +87,7 @@ function MissionSection({ status, onStatusChange }: { status: MissionState; onSt
                 textDecoration: i < idx ? 'line-through' : 'none',
               }}
             >
-              {s}
+              {s.replace('_', ' ')}
             </div>
             {i < stateFlow.length - 1 && <div className="text-white/15 text-xs">›</div>}
           </div>
@@ -132,17 +96,20 @@ function MissionSection({ status, onStatusChange }: { status: MissionState; onSt
 
       {/* Mission card */}
       <div className="p-4 rounded-xl flex-1" style={{ background: `${color}08`, border: `1px solid ${color}33` }}>
-        <div className="font-mono text-xs tracking-widest mb-2" style={{ color }}>ACTIVE MISSION</div>
-        <div className="font-condensed font-black text-2xl text-white mb-0.5">INC-2849</div>
-        <div className="font-condensed font-bold text-lg mb-1" style={{ color }}>STRUCTURAL COLLAPSE</div>
-        <div className="font-mono text-xs text-white/40 mb-4">Bridge Sector 7 · Zone NE-4</div>
+        <div className="flex items-center justify-between mb-2">
+          <div className="font-mono text-xs tracking-widest" style={{ color }}>ACTIVE MISSION</div>
+          <span className="font-mono text-[10px] text-white/40">INCIDENT ID</span>
+        </div>
+        <div className="font-condensed font-black text-2xl text-white mb-0.5">{mission?.incidentId || mission?.id || 'INC-2849'}</div>
+        <div className="font-condensed font-bold text-lg mb-1" style={{ color }}>{mission?.title || 'EMERGENCY OPERATION'}</div>
+        <div className="font-mono text-xs text-white/40 mb-4">{mission?.location || 'Bridge Sector 7 · Operational Zone'}</div>
 
         <div className="grid grid-cols-2 gap-2 mb-4">
           {[
-            { label: 'PRIORITY', value: 'P1 — CRITICAL', color: '#dc2626' },
-            { label: 'ETA TO SCENE', value: status === 'ON SCENE' || status === 'ASSISTING' ? 'ON SCENE' : '6 min', color },
-            { label: 'TEAM', value: 'ALPHA-3', color: '#10b981' },
-            { label: 'PERSONS', value: '3 trapped', color: '#f97316' },
+            { label: 'PRIORITY', value: mission?.priority || 'P1 — CRITICAL', color: '#dc2626' },
+            { label: 'ETA TO SCENE', value: activeRoute?.etaFormatted || (status === 'ARRIVED' ? 'ON SCENE' : '~6 min'), color },
+            { label: 'UNIT / TEAM', value: mission?.callsign || mission?.responderName || 'ALPHA-14', color: '#10b981' },
+            { label: 'ROUTE SAFETY', value: activeRoute?.safetyStatus || 'SAFE', color: activeRoute?.safetyStatus === 'CAUTION' ? '#f59e0b' : '#10b981' },
           ].map((item) => (
             <div key={item.label} className="p-2.5 rounded-lg" style={{ background: 'rgba(255,255,255,0.04)' }}>
               <div className="font-mono text-xs text-white/30 mb-0.5">{item.label}</div>
@@ -151,25 +118,66 @@ function MissionSection({ status, onStatusChange }: { status: MissionState; onSt
           ))}
         </div>
 
-        <div className="p-3 rounded-lg mb-4" style={{ background: 'rgba(220,38,38,0.05)', border: '1px solid rgba(220,38,38,0.15)' }}>
-          <div className="font-mono text-xs text-red-400 mb-1">HAZARD NOTES</div>
-          <div className="font-mono text-xs text-white/50 leading-relaxed">Gas leak detected. Maintain 20m perimeter. North approach blocked. Use East Service Road via Hwy 12.</div>
+        {/* Live GPS Sharing Panel */}
+        <div className="p-3.5 rounded-xl mb-4" style={{ background: isGpsSharing ? 'rgba(16,185,129,0.08)' : 'rgba(255,255,255,0.02)', border: isGpsSharing ? '1px solid rgba(16,185,129,0.3)' : '1px solid rgba(255,255,255,0.08)' }}>
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <span className={`w-2 h-2 rounded-full ${isGpsSharing ? 'bg-emerald-400 animate-ping' : 'bg-white/20'}`} />
+              <span className="font-mono text-xs font-bold text-white/80">
+                {isGpsSharing ? 'LIVE GPS BROADCASTING' : 'DEVICE GPS SHARING'}
+              </span>
+            </div>
+            <button
+              onClick={onToggleGps}
+              className={`px-2.5 py-1 rounded font-mono text-[10px] font-bold tracking-wider transition-colors ${
+                isGpsSharing
+                  ? 'bg-rose-500/20 text-rose-400 border border-rose-500/40 hover:bg-rose-500/30'
+                  : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 hover:bg-emerald-500/30'
+              }`}
+            >
+              {isGpsSharing ? 'STOP GPS' : 'START SHARING GPS'}
+            </button>
+          </div>
+
+          <div className="flex items-center justify-between font-mono text-[11px] text-white/40">
+            <span>
+              {currentCoords ? `${currentCoords.lat.toFixed(4)}°N, ${currentCoords.lng.toFixed(4)}°E` : 'Awaiting GPS lock...'}
+            </span>
+            {isGpsSharing && (
+              <button
+                onClick={onSimulateMove}
+                title="Advance vehicle along tactical route towards destination"
+                className="text-cyan-400 hover:text-cyan-300 underline cursor-pointer text-[10px]"
+              >
+                Simulate Transit Step →
+              </button>
+            )}
+          </div>
         </div>
 
-        {next && (
+        {/* Operational Status Advance Button */}
+        {nextAction && (
           <motion.button
-            onClick={() => onStatusChange(next)}
-            className="w-full py-3.5 rounded-xl font-condensed font-black text-base tracking-widest"
-            style={{ background: stateColors[next], color: '#080b0f', boxShadow: `0 0 24px ${stateColors[next]}44` }}
+            onClick={() => onStatusChange(nextAction.target)}
+            className="w-full py-3.5 rounded-xl font-condensed font-black text-base tracking-widest cursor-pointer"
+            style={{
+              background: stateColors[nextAction.target],
+              color: '#080b0f',
+              boxShadow: `0 0 24px ${stateColors[nextAction.target]}44`,
+            }}
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.97 }}
           >
-            → {stateNextLabel[status] || `MARK ${next}`}
+            → {nextAction.label}
           </motion.button>
         )}
+
         {status === 'COMPLETED' && (
-          <div className="w-full py-3.5 rounded-xl font-condensed font-black text-base tracking-widest text-center" style={{ background: 'rgba(16,185,129,0.12)', color: '#10b981', border: '1px solid rgba(16,185,129,0.3)' }}>
-            ✓ MISSION COMPLETED
+          <div
+            className="w-full py-3.5 rounded-xl font-condensed font-black text-base tracking-widest text-center"
+            style={{ background: 'rgba(16,185,129,0.12)', color: '#10b981', border: '1px solid rgba(16,185,129,0.3)' }}
+          >
+            ✓ MISSION COMPLETED & ARCHIVED
           </div>
         )}
       </div>
@@ -178,27 +186,29 @@ function MissionSection({ status, onStatusChange }: { status: MissionState; onSt
 }
 
 // ── Incident section ──────────────────────────────────────────────────────────
-function IncidentSection() {
+function IncidentSection({ mission }: { mission: any }) {
   return (
     <div className="space-y-4 h-full overflow-y-auto">
       <div className="font-condensed font-black text-xl text-white">INCIDENT DETAILS</div>
       {[
-        { label: 'INCIDENT ID', value: 'INC-2849' },
-        { label: 'TYPE', value: 'Structural Collapse' },
-        { label: 'SEVERITY', value: 'CRITICAL', color: '#dc2626' },
-        { label: 'REPORTED', value: '14:02 UTC' },
-        { label: 'ADDRESS', value: 'Bridge Sector 7, Zone NE-4' },
-        { label: 'PERSONS TRAPPED', value: '3 confirmed' },
+        { label: 'INCIDENT ID', value: mission?.incidentId || mission?.id || 'INC-2849' },
+        { label: 'TITLE', value: mission?.title || 'Operational Emergency Response' },
+        { label: 'SEVERITY', value: mission?.priority || 'CRITICAL', color: '#dc2626' },
+        { label: 'STATUS', value: mission?.status || 'ASSIGNED', color: '#10b981' },
+        { label: 'LOCATION', value: mission?.location || 'Bridge Sector 7' },
+        { label: 'CASUALTIES', value: mission?.casualtiesReported !== undefined ? `${mission.casualtiesReported} reported` : '3 trapped' },
       ].map((item) => (
         <div key={item.label} className="flex items-start justify-between py-2.5 border-b border-white/[0.05]">
           <div className="font-mono text-xs text-white/35">{item.label}</div>
-          <div className="font-condensed font-semibold text-sm text-right" style={{ color: item.color || 'rgba(232,237,242,0.9)' }}>{item.value}</div>
+          <div className="font-condensed font-semibold text-sm text-right" style={{ color: item.color || 'rgba(232,237,242,0.9)' }}>
+            {item.value}
+          </div>
         </div>
       ))}
       <div>
-        <div className="font-mono text-xs text-white/35 mb-2">FULL NOTES</div>
+        <div className="font-mono text-xs text-white/35 mb-2">OPERATIONAL BRIEF</div>
         <div className="p-3 rounded-lg font-mono text-xs text-white/55 leading-relaxed" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
-          Partial structural collapse on northwest span. Three construction workers reported trapped on second level. Gas main ruptured — utility crew en route. Do not use any electrical equipment near site. Fire unit standing by.
+          {mission?.notes || 'Structural hazards and secondary risk active in sector. Maintain tactical distance and report physical contact immediately upon arrival.'}
         </div>
       </div>
     </div>
@@ -206,32 +216,43 @@ function IncidentSection() {
 }
 
 // ── Navigation section ────────────────────────────────────────────────────────
-function NavigationSection() {
+function NavigationSection({ activeRoute }: { activeRoute: any }) {
+  const steps = activeRoute?.steps || [
+    { instruction: 'Depart station and merge onto tactical highway', distanceMeters: 400, durationSeconds: 60 },
+    { instruction: 'Proceed via primary arterial corridor', distanceMeters: 1800, durationSeconds: 240 },
+    { instruction: 'Arrive at destination incident perimeter', distanceMeters: 200, durationSeconds: 40 },
+  ];
+
   return (
-    <div className="space-y-4 h-full">
-      <div className="font-condensed font-black text-xl text-white">NAVIGATION</div>
+    <div className="space-y-4 h-full overflow-y-auto">
+      <div className="font-condensed font-black text-xl text-white">TACTICAL NAVIGATION</div>
       <div className="p-4 rounded-xl" style={{ background: 'rgba(16,185,129,0.06)', border: '1px solid rgba(16,185,129,0.25)' }}>
-        <div className="font-mono text-xs text-green-400 mb-2 tracking-widest">RECOMMENDED ROUTE</div>
-        <div className="font-condensed font-bold text-base text-white mb-1">East Service Road via Highway 12</div>
-        <div className="font-mono text-xs text-white/40 mb-4">2.4 km · ETA 6 min</div>
+        <div className="font-mono text-xs text-green-400 mb-2 tracking-widest">
+          {activeRoute?.safetyStatus ? `ACTIVE ROUTE (${activeRoute.safetyStatus})` : 'RECOMMENDED ROUTE'}
+        </div>
+        <div className="font-condensed font-bold text-base text-white mb-1">
+          {activeRoute?.label || 'Direct Primary Arterial Corridor'}
+        </div>
+        <div className="font-mono text-xs text-white/40 mb-4">
+          {activeRoute?.distanceFormatted || '2.4 km'} · ETA {activeRoute?.etaFormatted || '6 min'}
+        </div>
         <div className="space-y-2">
-          {[
-            { step: '1', instruction: 'Head north on River Road', distance: '0.4 km', ok: true },
-            { step: '2', instruction: 'Turn right onto Highway 12', distance: '1.2 km', ok: true },
-            { step: '3', instruction: 'Turn left onto East Service Road', distance: '0.6 km', ok: true },
-            { step: '4', instruction: 'Arrive: Bridge Sector 7 East entrance', distance: '0.2 km', ok: true },
-          ].map((s) => (
-            <div key={s.step} className="flex items-center gap-3">
-              <div className="w-6 h-6 rounded-full flex items-center justify-center font-mono text-xs shrink-0" style={{ background: 'rgba(16,185,129,0.15)', color: '#10b981' }}>{s.step}</div>
-              <div className="font-mono text-xs text-white/60 flex-1">{s.instruction}</div>
-              <div className="font-mono text-xs text-white/30">{s.distance}</div>
+          {steps.map((s: any, idx: number) => (
+            <div key={idx} className="flex items-start gap-3 p-2 rounded bg-white/[0.02]">
+              <div className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 font-mono text-[10px] flex items-center justify-center font-bold shrink-0">
+                {idx + 1}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="font-mono text-xs text-white/80">{s.instruction}</div>
+                {s.distanceMeters && (
+                  <div className="font-mono text-[10px] text-white/30">
+                    {s.distanceMeters < 1000 ? `${Math.round(s.distanceMeters)}m` : `${(s.distanceMeters / 1000).toFixed(1)}km`}
+                  </div>
+                )}
+              </div>
             </div>
           ))}
         </div>
-      </div>
-      <div className="p-4 rounded-xl" style={{ background: 'rgba(220,38,38,0.05)', border: '1px solid rgba(220,38,38,0.2)' }}>
-        <div className="font-mono text-xs text-red-400 mb-1">⛔ AVOID</div>
-        <div className="font-mono text-xs text-white/50">North approach via Bridge Ave — blocked by structural collapse perimeter</div>
       </div>
     </div>
   );
@@ -239,66 +260,45 @@ function NavigationSection() {
 
 // ── Resources section ─────────────────────────────────────────────────────────
 function ResourcesSection() {
-  const [requested, setRequested] = useState<string[]>([]);
   const items = [
-    { id: 'hydraulic', name: 'Hydraulic Rescue Kit', status: 'AVAILABLE', location: 'Station 3 · 0.8 km' },
-    { id: 'medkit', name: 'Advanced Trauma Kit', status: 'AVAILABLE', location: 'MEDIC 22 · nearby' },
-    { id: 'airbag', name: 'Lifting Air Bags', status: 'LIMITED', location: 'Depot North · 3 km' },
-    { id: 'rope', name: 'Rope & Harness Set', status: 'AVAILABLE', location: 'On unit' },
+    { name: 'Hydraulic Cutter / Spreader', qty: 2, unit: 'sets', ok: true },
+    { name: 'Medical Trauma Kit', qty: 4, unit: 'bags', ok: true },
+    { name: 'Hazard Isolation Gas Detectors', qty: 3, unit: 'units', ok: true },
   ];
+
   return (
-    <div className="space-y-4 h-full overflow-y-auto">
-      <div className="font-condensed font-black text-xl text-white">RESOURCE REQUEST</div>
-      <div className="font-mono text-xs text-white/35">Request resources for this mission. Requests are sent to Resource Manager.</div>
+    <div className="space-y-4 h-full">
+      <div className="font-condensed font-black text-xl text-white">ASSIGNED EQUIPMENT</div>
       <div className="space-y-2">
-        {items.map((item) => {
-          const isReq = requested.includes(item.id);
-          const color = item.status === 'AVAILABLE' ? '#10b981' : '#f59e0b';
-          return (
-            <div key={item.id} className="flex items-center gap-3 p-3 rounded-lg" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
-              <div className="flex-1">
-                <div className="font-condensed font-semibold text-sm text-white">{item.name}</div>
-                <div className="font-mono text-xs text-white/35">{item.location}</div>
-              </div>
-              <div className="font-mono text-xs px-2 py-0.5 rounded" style={{ background: `${color}15`, color }}>{item.status}</div>
-              <button
-                onClick={() => setRequested((p) => isReq ? p.filter((x) => x !== item.id) : [...p, item.id])}
-                className="font-condensed font-bold text-xs px-3 py-1.5 rounded transition-all duration-200"
-                style={{
-                  background: isReq ? 'rgba(16,185,129,0.15)' : 'rgba(245,158,11,0.1)',
-                  color: isReq ? '#10b981' : '#f59e0b',
-                  border: `1px solid ${isReq ? 'rgba(16,185,129,0.3)' : 'rgba(245,158,11,0.25)'}`,
-                }}
-              >
-                {isReq ? '✓ REQUESTED' : 'REQUEST'}
-              </button>
+        {items.map((it) => (
+          <div key={it.name} className="p-3 rounded-lg flex items-center justify-between border border-white/5" style={{ background: 'rgba(255,255,255,0.02)' }}>
+            <div>
+              <div className="font-condensed font-semibold text-sm text-white">{it.name}</div>
+              <div className="font-mono text-xs text-white/30">{it.qty} {it.unit} verified</div>
             </div>
-          );
-        })}
+            <div className="font-mono text-xs text-emerald-400 font-bold">READY</div>
+          </div>
+        ))}
       </div>
-      {requested.length > 0 && (
-        <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="p-3 rounded-lg" style={{ background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.25)' }}>
-          <div className="font-mono text-xs text-green-400">{requested.length} resource request(s) submitted to Resource Manager</div>
-        </motion.div>
-      )}
     </div>
   );
 }
 
 // ── Alerts section ────────────────────────────────────────────────────────────
-function AlertsSection() {
+function AlertsSection({ routeAlert }: { routeAlert: { show: boolean; message: string } | null }) {
   const alerts = [
-    { id: 1, level: 'CRITICAL', message: 'Gas leak confirmed at INC-2849. Maintain 20m exclusion zone.', time: '14:31' },
-    { id: 2, level: 'WARNING', message: 'Secondary structural collapse risk elevated at Bridge Sector 7.', time: '14:28' },
-    { id: 3, level: 'INFO', message: 'Fire unit Bravo-5 now standing by at east perimeter.', time: '14:22' },
-    { id: 4, level: 'INFO', message: 'Utility crew dispatched to secure gas main. ETA 15 min.', time: '14:18' },
+    ...(routeAlert?.show ? [{ id: 'route-dyn', level: 'WARNING', message: routeAlert.message, time: 'NOW' }] : []),
+    { id: 1, level: 'CRITICAL', message: 'Structural advisory: Maintain 20m perimeter around collapsed elements.', time: '14:31' },
+    { id: 2, level: 'WARNING', message: 'Severe wind conditions advisory active in northern quadrant.', time: '14:28' },
+    { id: 3, level: 'INFO', message: 'Direct dispatch telemetry channel connected.', time: '14:22' },
   ];
   const levelColors = { CRITICAL: '#dc2626', WARNING: '#f59e0b', INFO: '#06b6d4' };
+
   return (
     <div className="space-y-3 h-full overflow-y-auto">
       <div className="font-condensed font-black text-xl text-white">OPERATIONAL ALERTS</div>
       {alerts.map((a) => {
-        const color = levelColors[a.level as keyof typeof levelColors];
+        const color = levelColors[a.level as keyof typeof levelColors] || '#06b6d4';
         return (
           <motion.div
             key={a.id}
@@ -330,36 +330,212 @@ function useSectionFromUrl(): NavSection {
   return 'mission';
 }
 
-// ── Main ──────────────────────────────────────────────────────────────────────
+// ── Main Component ────────────────────────────────────────────────────────────
 export default function ResponderHome() {
   const [status, setStatus] = useState<MissionState>('ASSIGNED');
   const [mission, setMission] = useState<any>(null);
-  const section = useSectionFromUrl();
+  const [activeRoute, setActiveRoute] = useState<any>(null);
+  const [isGpsSharing, setIsGpsSharing] = useState(false);
+  const [currentCoords, setCurrentCoords] = useState<{ lat: number; lng: number; accuracy?: number } | null>({
+    lat: 28.6280,
+    lng: 77.2180,
+  });
+  const [routeAlert, setRouteAlert] = useState<{ show: boolean; message: string } | null>(null);
+  const [simStepIndex, setSimStepIndex] = useState(0);
 
-  useEffect(() => {
-    respondersApi.getAssignedMission()
-      .then((res) => {
-        if (res.data) {
-          setMission(res.data);
-          if (res.data.status && stateFlow.includes(res.data.status as MissionState)) {
-            setStatus(res.data.status as MissionState);
+  const section = useSectionFromUrl();
+  const watchIdRef = useRef<number | null>(null);
+
+  // Load assigned mission and active route
+  const loadMissionData = async () => {
+    try {
+      const res = await respondersApi.getAssignedMission();
+      if (res.data?.data || res.data) {
+        const m = res.data.data || res.data;
+        setMission(m);
+
+        if (m.status) {
+          const s = m.status.toUpperCase().replace(' ', '_');
+          if (stateFlow.includes(s as MissionState)) {
+            setStatus(s as MissionState);
           }
         }
-      })
-      .catch((err) => {
-        console.error('Failed to load active mission:', err);
-      });
-  }, []);
 
-  const handleStatusChange = async (nextStatus: MissionState) => {
-    setStatus(nextStatus);
-    const missionId = mission?.id || 'm-1';
-    try {
-      await respondersApi.updateMissionStatus(missionId, nextStatus);
-    } catch (err) {
-      console.error('Failed to update mission status on backend:', err);
+        // Query active tactical route for this incident
+        if (m.incidentId) {
+          const trackRes = await trackingApi.getTracking(m.incidentId);
+          if (trackRes.data?.data?.activeRoute) {
+            setActiveRoute(trackRes.data.data.activeRoute);
+          }
+        }
+      }
+    } catch (err: any) {
+      console.warn('Failed to load active mission:', err.message);
     }
   };
+
+  useEffect(() => {
+    loadMissionData();
+  }, []);
+
+  // Listen to SSE updates
+  useEffect(() => {
+    const eventSource = new EventSource('/api/events');
+
+    eventSource.onmessage = (e) => {
+      try {
+        const payload = JSON.parse(e.data);
+        const { type, payload: data } = payload;
+
+        if (type === 'ROUTE_UPDATED' && data.activeRoute) {
+          setActiveRoute(data.activeRoute);
+          setRouteAlert({
+            show: true,
+            message: data.reason || 'ROUTE UPDATED — SAFER ALTERNATIVE SELECTED',
+          });
+          setTimeout(() => setRouteAlert(null), 10000);
+        } else if (type === 'INCIDENT_STATUS_CHANGED' && data.newStatus) {
+          const s = data.newStatus.toUpperCase().replace(' ', '_');
+          if (stateFlow.includes(s as MissionState)) {
+            setStatus(s as MissionState);
+          }
+        }
+      } catch (err) {
+        console.warn('SSE parse error:', err);
+      }
+    };
+
+    return () => eventSource.close();
+  }, []);
+
+  // Toggle Live GPS Sharing
+  const toggleGpsSharing = () => {
+    if (isGpsSharing) {
+      if (watchIdRef.current !== null) {
+        navigator.geolocation?.clearWatch(watchIdRef.current);
+        watchIdRef.current = null;
+      }
+      setIsGpsSharing(false);
+    } else {
+      if (!navigator.geolocation) {
+        alert('Geolocation is not supported by your browser.');
+        return;
+      }
+
+      setIsGpsSharing(true);
+      // Immediately obtain and broadcast position
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const lat = pos.coords.latitude;
+          const lng = pos.coords.longitude;
+          const acc = pos.coords.accuracy;
+          setCurrentCoords({ lat, lng, accuracy: acc });
+
+          trackingApi.sendLocation({
+            entityType: 'responder',
+            entityId: mission?.responderId || 'R-14',
+            incidentId: mission?.incidentId,
+            latitude: lat,
+            longitude: lng,
+            accuracy: acc,
+            heading: pos.coords.heading || undefined,
+            speed: pos.coords.speed || undefined,
+          }).catch(() => {});
+        },
+        () => {},
+        { enableHighAccuracy: true }
+      );
+
+      // Continuous GPS watch
+      watchIdRef.current = navigator.geolocation.watchPosition(
+        (pos) => {
+          const lat = pos.coords.latitude;
+          const lng = pos.coords.longitude;
+          const acc = pos.coords.accuracy;
+          setCurrentCoords({ lat, lng, accuracy: acc });
+
+          trackingApi.sendLocation({
+            entityType: 'responder',
+            entityId: mission?.responderId || 'R-14',
+            incidentId: mission?.incidentId,
+            latitude: lat,
+            longitude: lng,
+            accuracy: acc,
+            heading: pos.coords.heading || undefined,
+            speed: pos.coords.speed || undefined,
+          }).catch(() => {});
+        },
+        (err) => console.warn('GPS Watch warning:', err.message),
+        { enableHighAccuracy: true, maximumAge: 3000 }
+      );
+    }
+  };
+
+  // Simulate vehicle movement along route (for testing when laptop is stationary)
+  const handleSimulateMove = () => {
+    const coords = activeRoute?.coordinates;
+    if (!coords || coords.length === 0) return;
+
+    const nextIdx = (simStepIndex + 1) % coords.length;
+    setSimStepIndex(nextIdx);
+
+    const [lat, lng] = coords[nextIdx];
+    setCurrentCoords({ lat, lng, accuracy: 5.0 });
+
+    trackingApi.sendLocation({
+      entityType: 'responder',
+      entityId: mission?.responderId || 'R-14',
+      incidentId: mission?.incidentId,
+      latitude: lat,
+      longitude: lng,
+      accuracy: 5.0,
+      heading: 90,
+      speed: 45,
+    }).catch(() => {});
+  };
+
+  // Handle Operational Lifecycle Transition
+  const handleStatusChange = async (nextStatus: MissionState) => {
+    setStatus(nextStatus);
+    try {
+      await trackingApi.updateStatus({
+        incidentId: mission?.incidentId,
+        responderId: mission?.responderId || 'R-14',
+        status: nextStatus,
+        actor: mission?.responderName || 'Alpha-14 Field Responder',
+        notes: `Operational state transitioned to ${nextStatus}`,
+      });
+    } catch (err: any) {
+      console.error('Failed to update operational status on backend:', err.message);
+    }
+  };
+
+  // Map markers for Responder view
+  const mapMarkers: MapMarker[] = [];
+  if (currentCoords) {
+    mapMarkers.push({
+      id: 'responder-unit',
+      type: 'responder',
+      title: `${mission?.responderName || 'You'} (${mission?.callsign || 'ALPHA-14'})`,
+      lat: currentCoords.lat,
+      lng: currentCoords.lng,
+      details: `Status: ${status}`,
+      status,
+    });
+  }
+
+  const destLat = mission?.lat || (activeRoute?.coordinates?.length ? activeRoute.coordinates[activeRoute.coordinates.length - 1][0] : 28.6139);
+  const destLng = mission?.lng || (activeRoute?.coordinates?.length ? activeRoute.coordinates[activeRoute.coordinates.length - 1][1] : 77.2090);
+
+  mapMarkers.push({
+    id: 'destination-incident',
+    type: 'incident',
+    title: mission?.title || 'Emergency Destination',
+    lat: destLat,
+    lng: destLng,
+    details: mission?.location || 'Incident Perimeter',
+    severity: mission?.priority || 'CRITICAL',
+  });
 
   const color = stateColors[status];
 
@@ -375,35 +551,35 @@ export default function ResponderHome() {
       >
         {/* Header */}
         <div className="px-5 pt-5 pb-4 border-b border-white/[0.05]">
-          <div className="font-mono text-xs text-white/30 mb-1 tracking-widest">MY NEXT MISSION</div>
-          <div className="font-condensed font-black text-2xl text-white leading-tight">WHAT DO I</div>
-          <div className="font-condensed font-black text-2xl leading-tight" style={{ color }}>DO NEXT?</div>
+          <div className="font-mono text-xs text-white/30 mb-1 tracking-widest">FIELD DISPATCH</div>
+          <div className="font-condensed font-black text-2xl text-white leading-tight">TACTICAL UNIT</div>
+          <div className="font-condensed font-black text-2xl leading-tight" style={{ color }}>{status.replace('_', ' ')}</div>
         </div>
 
         {/* Active section indicator */}
         <div className="px-5 py-2 border-b border-white/[0.05]">
           <div className="font-mono text-xs" style={{ color, opacity: 0.7 }}>
-            {section === 'mission' ? 'MISSION' : section === 'incident' ? 'INCIDENT' : section === 'navigation' ? 'NAVIGATION' : section === 'resources' ? 'RESOURCES' : 'ALERTS'}
+            {section === 'mission' ? 'MISSION BRIEF' : section === 'incident' ? 'INCIDENT' : section === 'navigation' ? 'NAVIGATION' : section === 'resources' ? 'RESOURCES' : 'ALERTS'}
           </div>
         </div>
 
-        {/* Team */}
+        {/* Team details */}
         <div className="p-4">
-          <div className="font-mono text-xs text-white/30 tracking-widest mb-3">TEAM ALPHA-3</div>
+          <div className="font-mono text-xs text-white/30 tracking-widest mb-3">DEPLOYED UNIT</div>
           <div className="space-y-2">
             {[
-              { name: 'J. Martinez', role: 'Lead', st: 'ON SCENE' },
-              { name: 'S. Okafor', role: 'Medic', st: 'EN ROUTE' },
-              { name: 'R. Chen', role: 'Tech', st: 'ON SCENE' },
+              { name: mission?.responderName || 'Alpha-14 SAR Unit', role: 'Command Lead', st: status },
+              { name: 'Ambulance Medic 14', role: 'Medical Staging', st: 'EN ROUTE' },
+              { name: 'Rescue Tech Team', role: 'Heavy Extrication', st: 'READY' },
             ].map((m) => {
-              const mc = stateColors[m.st as MissionState] || '#6b7280';
+              const mc = stateColors[m.st as MissionState] || '#10b981';
               return (
                 <div key={m.name} className="flex items-center gap-2.5">
                   <div className="w-7 h-7 rounded-full flex items-center justify-center font-condensed font-bold text-xs shrink-0" style={{ background: `${mc}18`, color: mc }}>
                     {m.name[0]}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="font-condensed font-semibold text-xs text-white">{m.name}</div>
+                    <div className="font-condensed font-semibold text-xs text-white truncate">{m.name}</div>
                     <div className="font-mono text-xs text-white/30">{m.role}</div>
                   </div>
                   <div className="font-mono text-xs" style={{ color: mc, fontSize: '0.6rem' }}>{m.st}</div>
@@ -414,7 +590,7 @@ export default function ResponderHome() {
         </div>
       </motion.div>
 
-      {/* Center — section content */}
+      {/* Center — section content & map */}
       <div className="flex-1 flex flex-col overflow-hidden">
         <div className="flex-1 flex overflow-hidden">
           {/* Section detail */}
@@ -429,34 +605,74 @@ export default function ResponderHome() {
                   transition={{ duration: 0.25 }}
                   className="h-full"
                 >
-                  {section === 'mission' && <MissionSection status={status} onStatusChange={handleStatusChange} />}
-                  {section === 'incident' && <IncidentSection />}
-                  {section === 'navigation' && <NavigationSection />}
+                  {section === 'mission' && (
+                    <MissionSection
+                      status={status}
+                      mission={mission}
+                      activeRoute={activeRoute}
+                      onStatusChange={handleStatusChange}
+                      isGpsSharing={isGpsSharing}
+                      onToggleGps={toggleGpsSharing}
+                      currentCoords={currentCoords}
+                      onSimulateMove={handleSimulateMove}
+                    />
+                  )}
+                  {section === 'incident' && <IncidentSection mission={mission} />}
+                  {section === 'navigation' && <NavigationSection activeRoute={activeRoute} />}
                   {section === 'resources' && <ResourcesSection />}
-                  {section === 'alerts' && <AlertsSection />}
+                  {section === 'alerts' && <AlertsSection routeAlert={routeAlert} />}
                 </motion.div>
               </AnimatePresence>
             </div>
           </div>
 
-          {/* Spatial map */}
+          {/* Interactive Map View */}
           <div className="flex-1 relative">
-            <div className="absolute inset-0">
-              <MissionMap status={status} />
-            </div>
+            <OperationalMap
+              center={currentCoords || { lat: destLat, lng: destLng }}
+              zoom={14}
+              markers={mapMarkers}
+              activeRouteCoordinates={activeRoute?.coordinates}
+              activeRoutePolyline={activeRoute?.polyline}
+              routeSafetyStatus={activeRoute?.safetyStatus || 'SAFE'}
+              className="w-full h-full"
+            />
 
-            {/* HUD */}
+            {/* Dynamic Re-Routing Alert Notification */}
+            <AnimatePresence>
+              {routeAlert?.show && (
+                <motion.div
+                  initial={{ opacity: 0, y: -20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -20 }}
+                  className="absolute top-4 left-4 z-30 max-w-md p-3.5 rounded-xl border flex items-center gap-3 shadow-2xl"
+                  style={{
+                    background: 'rgba(220, 38, 38, 0.2)',
+                    borderColor: '#dc2626',
+                    backdropFilter: 'blur(12px)',
+                  }}
+                >
+                  <span className="text-xl">⚠️</span>
+                  <div className="flex-1 min-w-0 font-mono text-xs">
+                    <div className="font-bold text-rose-400">ROUTE UPDATED — SAFER ALTERNATIVE SELECTED</div>
+                    <div className="text-white/70 truncate">{routeAlert.message}</div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* Tactical HUD Overlay */}
             <div className="absolute top-4 right-4 z-10 flex flex-col items-end gap-2">
               <div className="glass px-3 py-2 rounded-lg font-mono text-xs" style={{ border: `1px solid ${color}33`, color }}>
-                STATUS: {status}
+                STATUS: {status.replace('_', ' ')}
               </div>
-              <div className="glass px-3 py-2 rounded-lg font-mono text-xs text-white/35" style={{ border: '1px solid rgba(255,255,255,0.06)' }}>
-                INC-2849 · {['ON SCENE', 'ASSISTING'].includes(status) ? 'AT SCENE' : '~6 min ETA'}
+              <div className="glass px-3 py-2 rounded-lg font-mono text-xs text-white/50" style={{ border: '1px solid rgba(255,255,255,0.06)' }}>
+                {activeRoute ? `${activeRoute.distanceFormatted} · ${activeRoute.etaFormatted}` : 'Routing active'}
               </div>
             </div>
 
-            <div className="absolute bottom-4 left-4 z-10 font-mono text-xs text-white/25">
-              Tap the mission section to update status
+            <div className="absolute bottom-4 left-4 z-10 font-mono text-xs text-white/30 glass px-3 py-1.5 rounded-lg border border-white/5">
+              Live operational telemetry · {isGpsSharing ? 'GPS Fix Active' : 'Stationary GPS Mode'}
             </div>
           </div>
         </div>

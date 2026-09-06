@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useLocation } from 'react-router';
-import { commandApi, respondersApi, predictiveApi, orchestratorApi, incidentsApi } from '../../api';
+import { commandApi, respondersApi, predictiveApi, orchestratorApi, incidentsApi, routesApi } from '../../api';
 import OperationalMap, { MapMarker } from '../../components/map/OperationalMap';
 
 // Authority / Command merges: Dispatcher (ResQ Sphere, incident assignment, dispatch)
@@ -2611,6 +2611,7 @@ export default function CommandHome() {
   const [agentsState, setAgentsState] = useState(activeAgentsData);
   const [liveIncidents, setLiveIncidents] = useState<any[]>(incidents);
   const [liveResponders, setLiveResponders] = useState<any[]>(responders);
+  const [commandActiveRoute, setCommandActiveRoute] = useState<any>(null);
   const [centerViewMode, setCenterViewMode] = useState<'sphere' | 'map'>('sphere');
   const [isOrchestrating, setIsOrchestrating] = useState(false);
   const isFetchingRef = useRef(false);
@@ -2780,6 +2781,25 @@ export default function CommandHome() {
               current_stage: 'MONITORING SYSTEM',
               current_step: 0,
             }));
+          } else if (eventType === 'RESPONDER_LOCATION_UPDATED') {
+            // Live responder vehicle movement
+            setLiveResponders((prev: any[]) =>
+              prev.map((r) =>
+                r.id === eventData.responderId
+                  ? {
+                      ...r,
+                      lat: eventData.latitude,
+                      lng: eventData.longitude,
+                      latitude: eventData.latitude,
+                      longitude: eventData.longitude,
+                      status: r.status,
+                    }
+                  : r
+              )
+            );
+          } else if (eventType === 'ROUTE_UPDATED' && eventData.activeRoute) {
+            // Live route update from backend routing engine
+            setCommandActiveRoute(eventData.activeRoute);
           }
 
           if (
@@ -2791,7 +2811,9 @@ export default function CommandHome() {
             eventType === 'ORCHESTRATION_EXECUTING' ||
             eventType === 'ORCHESTRATION_MONITORING' ||
             eventType === 'OPERATIONAL_STATE_CHANGED' ||
-            eventType === 'ORCHESTRATION_IDLE'
+            eventType === 'ORCHESTRATION_IDLE' ||
+            eventType === 'EMERGENCY_REQUEST_CREATED' ||
+            eventType === 'INCIDENT_STATUS_CHANGED'
           ) {
             commandApi.getOverview().then((res) => {
               if (res?.data?.agents) {
@@ -2812,6 +2834,7 @@ export default function CommandHome() {
               }
             }).catch(() => {});
           }
+
         } catch {}
       };
     } catch {}
@@ -3111,29 +3134,33 @@ export default function CommandHome() {
                       <div className="w-full h-full rounded-xl overflow-hidden border border-white/10 relative">
                         <OperationalMap
                           markers={[
-                            ...incidents.map((inc) => ({
+                            ...(liveIncidents.length ? liveIncidents : incidents).map((inc: any) => ({
                               id: inc.id,
                               type: 'incident' as const,
-                              title: inc.id,
-                              lat: 40.7128 + (inc.lat - 50) * 0.01,
-                              lng: -74.006 + (inc.lng - 50) * 0.01,
-                              details: `${inc.severity} · ${inc.type}`,
-                              severity: inc.severity,
+                              title: inc.title || inc.id,
+                              lat: typeof inc.latitude === 'number' ? inc.latitude : typeof inc.lat === 'number' ? inc.lat : 28.6139,
+                              lng: typeof inc.longitude === 'number' ? inc.longitude : typeof inc.lng === 'number' ? inc.lng : 77.2090,
+                              details: `${inc.severity || 'CRITICAL'} · ${inc.type || 'GENERAL'}`,
+                              severity: inc.severity || 'CRITICAL',
                             })),
-                            ...responders.map((r) => ({
+                            ...(liveResponders.length ? liveResponders : responders).map((r: any) => ({
                               id: r.id,
                               type: 'responder' as const,
-                              title: `Unit ${r.name}`,
-                              lat: 40.7128 + (r.lat - 50) * 0.01,
-                              lng: -74.006 + (r.lng - 50) * 0.01,
-                              details: r.status,
-                              status: r.status,
+                              title: `Unit ${r.name || r.callsign || r.id}`,
+                              lat: typeof r.latitude === 'number' ? r.latitude : typeof r.lat === 'number' ? r.lat : 28.6280,
+                              lng: typeof r.longitude === 'number' ? r.longitude : typeof r.lng === 'number' ? r.lng : 77.2180,
+                              details: r.status || 'AVAILABLE',
+                              status: r.status || 'AVAILABLE',
                             })),
                           ]}
+                          activeRouteCoordinates={commandActiveRoute?.coordinates}
+                          activeRoutePolyline={commandActiveRoute?.polyline}
+                          routeSafetyStatus={commandActiveRoute?.safetyStatus || 'SAFE'}
                           onMarkerClick={(m) => setSelectedIncident(m.id)}
                           className="w-full h-full"
                         />
                       </div>
+
                     )}
                   </div>
                   <div className="absolute top-4 left-4 font-mono text-xs px-3 py-1.5 rounded z-20"

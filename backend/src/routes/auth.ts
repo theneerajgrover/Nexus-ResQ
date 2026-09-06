@@ -257,7 +257,7 @@ authRouter.get('/me', async (req: Request, res: Response): Promise<void> => {
         ) as AuthenticatedUser;
 
         const userRes = await query(
-          `SELECT id, name, email, role, phone, phone_number, department, status, is_active, created_at 
+          `SELECT id, name, email, role, phone, phone_number, department, status, is_active, latitude, longitude, created_at 
            FROM users WHERE id = $1`,
           [decoded.id]
         );
@@ -275,6 +275,8 @@ authRouter.get('/me', async (req: Request, res: Response): Promise<void> => {
               phone_number: u.phone_number || u.phone,
               department: u.department,
               status: u.status,
+              latitude: u.latitude ? parseFloat(u.latitude) : null,
+              longitude: u.longitude ? parseFloat(u.longitude) : null,
               createdAt: u.created_at,
             },
           });
@@ -288,7 +290,7 @@ authRouter.get('/me', async (req: Request, res: Response): Promise<void> => {
     // Role-based lookup fallback
     const role = (req.query.role as string) || 'citizen';
     const userRes = await query(
-      `SELECT id, name, email, role, phone, phone_number, department, status, is_active, created_at 
+      `SELECT id, name, email, role, phone, phone_number, department, status, is_active, latitude, longitude, created_at 
        FROM users WHERE role = $1 ORDER BY created_at ASC LIMIT 1`,
       [role]
     );
@@ -306,6 +308,8 @@ authRouter.get('/me', async (req: Request, res: Response): Promise<void> => {
           phone_number: u.phone_number || u.phone,
           department: u.department,
           status: u.status,
+          latitude: u.latitude ? parseFloat(u.latitude) : null,
+          longitude: u.longitude ? parseFloat(u.longitude) : null,
           createdAt: u.created_at,
         },
       });

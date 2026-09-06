@@ -23,6 +23,7 @@ import { weatherRouter, locationRouter } from './routes/external';
 import { approvalsRouter } from './routes/approvals';
 import { notificationsRouter } from './routes/notifications';
 import { orchestratorRouter } from './routes/orchestrator';
+import { trackingRouter } from './routes/tracking';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -84,6 +85,7 @@ app.use('/api/location', locationRouter);
 app.use('/api/approvals', approvalsRouter);
 app.use('/api/notifications', notificationsRouter);
 app.use('/api/orchestrator', orchestratorRouter);
+app.use('/api/tracking', trackingRouter);
 
 // ── 404 & Error Handlers ─────────────────────────────────────
 app.use((req, res) => {

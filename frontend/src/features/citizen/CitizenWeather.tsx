@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { weatherApi, locationApi } from '../../api';
+import { useAppStore } from '../../store/useAppStore';
 
 interface WeatherData {
   temperature: number;
@@ -26,9 +27,12 @@ interface WeatherData {
 }
 
 export default function CitizenWeather() {
-  const [coords, setCoords] = useState<{ lat: number; lng: number }>({ lat: 40.7128, lng: -74.006 });
-  const [locationLabel, setLocationLabel] = useState<string>('Detecting location...');
-  const [isGpsLocked, setIsGpsLocked] = useState<boolean>(false);
+  const { userLocation } = useAppStore();
+  const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(() =>
+    userLocation?.status === 'locked' && userLocation.lat ? { lat: userLocation.lat, lng: userLocation.lng } : null
+  );
+  const [locationLabel, setLocationLabel] = useState<string>('Detecting device location...');
+  const [isGpsLocked, setIsGpsLocked] = useState<boolean>(() => userLocation?.status === 'locked');
   const [weather, setWeather] = useState<WeatherData | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [lastSync, setLastSync] = useState<Date>(new Date());
@@ -55,6 +59,28 @@ export default function CitizenWeather() {
 
   // Acquire GPS on mount
   useEffect(() => {
+    if (userLocation?.status === 'locked' && userLocation.lat && userLocation.lng) {
+      const lat = userLocation.lat;
+      const lng = userLocation.lng;
+      setCoords({ lat, lng });
+      setIsGpsLocked(true);
+
+      locationApi.reverseGeocode(lat, lng).then((geoRes) => {
+        const gData = geoRes?.data || geoRes;
+        const address = gData?.formattedAddress || gData?.rawDisplayName || gData?.display_name;
+        if (address) {
+          setLocationLabel(address);
+        } else {
+          setLocationLabel(`${lat.toFixed(4)}° N, ${lng.toFixed(4)}° E`);
+        }
+      }).catch(() => {
+        setLocationLabel(`${lat.toFixed(4)}° N, ${lng.toFixed(4)}° E`);
+      });
+
+      fetchWeather(lat, lng);
+      return;
+    }
+
     if (typeof navigator !== 'undefined' && 'geolocation' in navigator) {
       navigator.geolocation.getCurrentPosition(
         async (pos) => {
@@ -65,31 +91,42 @@ export default function CitizenWeather() {
 
           try {
             const geoRes = await locationApi.reverseGeocode(lat, lng);
-            if (geoRes.data?.address) {
-              setLocationLabel(geoRes.data.address);
+            const gData = geoRes?.data || geoRes;
+            const address = gData?.formattedAddress || gData?.rawDisplayName || gData?.display_name;
+            if (address) {
+              setLocationLabel(address);
             } else {
-              setLocationLabel(`${lat.toFixed(4)}° N, ${lng.toFixed(4)}° W`);
+              setLocationLabel(`${lat.toFixed(4)}° N, ${lng.toFixed(4)}° E`);
             }
           } catch {
-            setLocationLabel(`${lat.toFixed(4)}° N, ${lng.toFixed(4)}° W`);
+            setLocationLabel(`${lat.toFixed(4)}° N, ${lng.toFixed(4)}° E`);
           }
 
           fetchWeather(lat, lng);
         },
         (err) => {
-          console.warn('GPS error, using default coordinates:', err.message);
-          setLocationLabel('Metropolitan Zone (Fallback Coordinates)');
-          fetchWeather(coords.lat, coords.lng);
+          console.warn('GPS error:', err.message);
+          setLoading(false);
+          if (err.code === err.PERMISSION_DENIED) {
+            setLocationLabel('Location Permission Required');
+            setError('Location permission is required to determine local meteorological conditions.');
+          } else {
+            setLocationLabel('GPS Signal Unavailable');
+            setError('Device GPS position unavailable. Please verify location settings.');
+          }
         },
-        { enableHighAccuracy: true, timeout: 8000 }
+        { enableHighAccuracy: true, timeout: 10000 }
       );
     } else {
-      fetchWeather(coords.lat, coords.lng);
+      setLoading(false);
+      setLocationLabel('Geolocation Unsupported');
+      setError('Browser geolocation is not supported.');
     }
-  }, [fetchWeather]);
+  }, [fetchWeather, userLocation]);
 
   // Periodic refresh every 30 seconds
   useEffect(() => {
+    if (!coords) return;
     const interval = setInterval(() => {
       fetchWeather(coords.lat, coords.lng);
     }, 30000);
@@ -123,8 +160,12 @@ export default function CitizenWeather() {
           </div>
           <div className="font-mono text-xs text-white/50 mt-1 flex items-center gap-2">
             <span>📍 {locationLabel}</span>
-            <span>·</span>
-            <span>[{coords.lat.toFixed(4)}, {coords.lng.toFixed(4)}]</span>
+            {coords && (
+              <>
+                <span>·</span>
+                <span>[{coords.lat.toFixed(4)}, {coords.lng.toFixed(4)}]</span>
+              </>
+            )}
           </div>
         </div>
 
@@ -137,9 +178,9 @@ export default function CitizenWeather() {
             </div>
           </div>
           <motion.button
-            onClick={() => fetchWeather(coords.lat, coords.lng)}
-            disabled={loading}
-            className="px-4 py-2 rounded-lg font-condensed font-bold text-xs tracking-widest bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 transition-all flex items-center gap-2"
+            onClick={() => coords && fetchWeather(coords.lat, coords.lng)}
+            disabled={loading || !coords}
+            className="px-4 py-2 rounded-lg font-condensed font-bold text-xs tracking-widest bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
             whileTap={{ scale: 0.96 }}
           >
             <span className={loading ? 'animate-spin inline-block' : ''}>⟳</span>

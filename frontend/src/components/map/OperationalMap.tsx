@@ -19,11 +19,15 @@ export interface OperationalMapProps {
   zoom?: number;
   markers?: MapMarker[];
   safeRouteDestination?: { lat: number; lng: number; label: string } | null;
+  activeRouteCoordinates?: [number, number][];
+  activeRoutePolyline?: string;
+  routeSafetyStatus?: 'SAFE' | 'CAUTION' | 'HIGH_RISK' | 'BLOCKED';
   onMarkerClick?: (marker: MapMarker) => void;
   className?: string;
   onRecenter?: () => void;
   onLocationFound?: (coords: { lat: number; lng: number }) => void;
 }
+
 
 type MapMode = 'DARK' | 'SATELLITE';
 
@@ -130,6 +134,9 @@ export default function OperationalMap({
   zoom = 13,
   markers = [],
   safeRouteDestination = null,
+  activeRouteCoordinates,
+  activeRoutePolyline,
+  routeSafetyStatus = 'SAFE',
   onMarkerClick,
   className = 'w-full h-full',
   onRecenter,
@@ -139,6 +146,7 @@ export default function OperationalMap({
   const mapInstanceRef = useRef<any>(null);
   const markersRef = useRef<any[]>([]);
   const directionsRendererRef = useRef<any>(null);
+  const customPolylineRef = useRef<any>(null);
   const deviceMarkerRef = useRef<any>(null);
 
   const [mapMode, setMapMode] = useState<MapMode>('DARK');
@@ -425,6 +433,55 @@ export default function OperationalMap({
       }
     );
   }, [safeRouteDestination, center]);
+
+  // Render tactical active route polyline
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map || !window.google?.maps) return;
+
+    if (customPolylineRef.current) {
+      customPolylineRef.current.setMap(null);
+      customPolylineRef.current = null;
+    }
+
+    let coords = activeRouteCoordinates;
+    if ((!coords || coords.length === 0) && activeRoutePolyline) {
+      try {
+        if (window.google.maps.geometry?.encoding) {
+          const decoded = window.google.maps.geometry.encoding.decodePath(activeRoutePolyline);
+          coords = decoded.map((p: any) => [p.lat(), p.lng()]);
+        }
+      } catch {
+        // polyline decode fallback
+      }
+    }
+
+    if (coords && coords.length > 0) {
+      const path = coords.map(([lat, lng]) => ({ lat, lng }));
+      const strokeColor =
+        routeSafetyStatus === 'BLOCKED' || routeSafetyStatus === 'HIGH_RISK'
+          ? '#dc2626'
+          : routeSafetyStatus === 'CAUTION'
+          ? '#f59e0b'
+          : '#10b981';
+
+      customPolylineRef.current = new window.google.maps.Polyline({
+        path,
+        geodesic: true,
+        strokeColor,
+        strokeOpacity: 0.9,
+        strokeWeight: 4.5,
+        map,
+      });
+    }
+
+    return () => {
+      if (customPolylineRef.current) {
+        customPolylineRef.current.setMap(null);
+        customPolylineRef.current = null;
+      }
+    };
+  }, [activeRouteCoordinates, activeRoutePolyline, routeSafetyStatus, mapLoaded]);
 
   return (
     <div className={`relative ${className} bg-[#080b0f] overflow-hidden select-none`}>
