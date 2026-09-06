@@ -1,1027 +1,1424 @@
-# 🌐 Nexus ResQ
-
-### AI-Powered Disaster Intelligence & Emergency Response Platform
+````markdown
+# Nexus ResQ
 
 <p align="center">
-  <strong>Observe. Understand. Decide. Respond.</strong><br>
-  A real-time emergency coordination ecosystem connecting people, responders, authorities, volunteers, shelters, and resources through intelligent geospatial operations.
+  <strong>NATIONAL EMERGENCY COORDINATION & RESPONSE PLATFORM</strong>
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Status-In%20Development-orange?style=for-the-badge" alt="Status">
-  <img src="https://img.shields.io/badge/AI-Intelligence-blue?style=for-the-badge" alt="AI">
-  <img src="https://img.shields.io/badge/Backend-FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white" alt="FastAPI">
-  <img src="https://img.shields.io/badge/Frontend-React-61DAFB?style=for-the-badge&logo=react&logoColor=black" alt="React">
-  <img src="https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&logo=typescript&logoColor=white" alt="TypeScript">
-  <img src="https://img.shields.io/badge/PostgreSQL-4169E1?style=for-the-badge&logo=postgresql&logoColor=white" alt="PostgreSQL">
-  <img src="https://img.shields.io/badge/PostGIS-0F4C5C?style=for-the-badge" alt="PostGIS">
-  <img src="https://img.shields.io/badge/Three.js-000000?style=for-the-badge&logo=three.js&logoColor=white" alt="Three.js">
-  <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License">
+  AI-assisted, multi-agency disaster coordination connecting citizens,
+  responders, command authorities, and resource networks in real time.
+</p>
+
+<p align="center">
+
+![Status](https://img.shields.io/badge/status-operational-success)
+![Frontend](https://img.shields.io/badge/frontend-React%2019-61DAFB)
+![Backend](https://img.shields.io/badge/backend-Node.js%20%2B%20Express-339933)
+![Database](https://img.shields.io/badge/database-PostgreSQL-4169E1)
+![AI](https://img.shields.io/badge/AI-11--Agent%20Orchestration-6C63FF)
+![Authentication](https://img.shields.io/badge/auth-JWT-orange)
+![Maps](https://img.shields.io/badge/maps-OSM%20%2B%20Routing-green)
+![License](https://img.shields.io/badge/license-MIT-blue)
+
 </p>
 
 ---
 
-## 🚨 The Problem
+## Overview
 
-During disasters, the problem is rarely the absence of information.
+**Nexus ResQ** is an AI-assisted emergency coordination and disaster-response platform designed to connect the entire emergency-response ecosystem through a unified operational system.
 
-The real problem is **fragmented information arriving at different people, systems, and organizations at different times**.
+The platform is designed around a simple principle:
 
-A person may need help while responders are unaware of the request.
+> **Detect → Verify → Understand → Prioritize → Plan → Approve → Execute → Monitor → Re-plan**
 
-A rescue team may be available while another incident is waiting for assistance.
+Instead of treating disaster response as a collection of disconnected systems, Nexus ResQ brings citizens, emergency responders, command authorities, and resource managers into one coordinated operational environment.
 
-A shelter may have capacity while nearby teams lack visibility into it.
+The system combines:
 
-Resources may exist but remain poorly coordinated.
+- Real-time incident intelligence
+- AI-assisted disaster analysis
+- Multi-agent response planning
+- Human-supervised decision making
+- Emergency assistance requests
+- Resource coordination
+- Shelter management
+- Ambulance and responder coordination
+- Safe-route selection
+- Weather intelligence
+- Live operational monitoring
+- PostgreSQL-backed persistence
+- JWT-based authentication
+- Role-based access control
 
-Authorities may receive large amounts of data without a unified operational picture.
+The goal is not simply to display disaster information.
 
-**Nexus ResQ is designed to connect these disconnected pieces into one intelligent response ecosystem.**
-
----
-
-# 🧭 What is Nexus ResQ?
-
-**Nexus ResQ** is an AI-powered disaster intelligence and emergency response platform designed to coordinate the complete emergency-response lifecycle.
-
-It connects:
-
-**Help Seekers → Responders → Dispatchers → Authorities → Volunteers → Shelters → Resources → Intelligence**
-
-through a shared real-time operational infrastructure.
-
-Instead of treating emergency management as a collection of dashboards, Nexus ResQ introduces a **spatial operating environment** where incidents, responders, risks, shelters, evacuation routes, resources, and time can be understood together.
-
-### The core idea
-
-> **Turn fragmented emergency information into coordinated, actionable response intelligence.**
+The goal is to help authorities **understand what is happening, determine what should happen next, obtain human authorization where required, execute the response, and continuously adapt as conditions change.**
 
 ---
 
-# ✨ What Makes Nexus ResQ Different?
+# Core Operational Roles
 
-Nexus ResQ is not designed as another conventional disaster dashboard.
+Nexus ResQ uses four core operational roles.
 
-The platform uses a **3D-first spatial interaction model** to represent emergency situations as a living operational environment.
+| Role | Primary Responsibility |
+|---|---|
+| 👤 **Citizen** | Report emergencies, request help, receive alerts, find shelters and safe routes |
+| 🚑 **Responder** | Receive missions, navigate to incidents, update mission status, request resources |
+| 🏛️ **Authority / Command** | Monitor incidents, analyze intelligence, review AI plans, approve response actions and coordinate dispatch |
+| 📦 **Resource Manager** | Manage shelters, supplies, ambulances, equipment and approved resource dispatch records |
 
-Instead of:
-
-> Tables → Cards → Filters → Dashboards
-
-Nexus ResQ is designed around:
-
-> **Space → Context → Intelligence → Action**
-
-### 🌍 Spatial Intelligence
-
-Incidents, responders, shelters, resources and risk zones can be represented as spatial entities.
-
-### 🧠 AI-Assisted Decision Support
-
-AI can assist with:
-
-* Risk assessment
-* Incident prioritization
-* Evacuation intelligence
-* Resource demand prediction
-* Response recommendations
-* Anomaly detection
-
-### ⚡ Real-Time Coordination
-
-Operational information can be synchronized through real-time communication between users and the backend.
-
-### 👥 Role-Specific Experiences
-
-A citizen does not need a command-center interface.
-
-A responder does not need an administrative dashboard.
-
-A dispatcher does not need the same interface as a volunteer.
-
-Nexus ResQ provides different operational experiences while maintaining one connected ecosystem.
-
-### 🗺️ Geospatial Operations
-
-Location becomes a first-class component of the system through spatial queries, risk zones, responder proximity, shelters and evacuation routes.
+Access to operational functionality is controlled through role-based authentication.
 
 ---
 
-# 👥 One Platform. Multiple Communities.
-
-Nexus ResQ is designed around the people and organizations that participate in disaster response.
-
-| Community             | Primary Objective                                           |
-| --------------------- | ----------------------------------------------------------- |
-| 🆘 Help Seekers       | Get assistance and understand the safest next action        |
-| 🚑 Responders         | Receive, navigate and execute emergency missions            |
-| 🤝 Volunteers         | Discover safe and authorized ways to contribute             |
-| 🎛️ Dispatchers       | Coordinate incidents and response teams                     |
-| 🏛️ Authorities       | Understand regional risk and operational conditions         |
-| 📦 Resource Operators | Coordinate supplies, equipment and logistics                |
-| 🏥 Organizations      | Coordinate teams, shelters and operational resources        |
-| 🛡️ Administrators    | Maintain users, permissions, integrations and system health |
-
-The same underlying operational data can produce completely different experiences depending on the user's role and authorization.
-
----
-
-# 🆘 Help Seeker Experience
-
-The public-facing experience is intentionally simple.
-
-In an emergency, the user should not have to navigate a complicated application.
-
-### Core flow
+# System Architecture
 
 ```text
-Open Nexus ResQ
-      ↓
-Understand Local Situation
-      ↓
-GET HELP
-      ↓
-Share / Confirm Location
-      ↓
-Submit Emergency Request
-      ↓
-Request Acknowledged
-      ↓
-Responder Assigned
-      ↓
-Responder En Route
-      ↓
-Assistance
-      ↓
-Resolution
-```
+                         ┌───────────────────────┐
+                         │       CITIZEN         │
+                         │                       │
+                         │ Emergency Help        │
+                         │ Alerts                │
+                         │ Shelters              │
+                         │ Safe Routes           │
+                         │ History               │
+                         └───────────┬───────────┘
+                                     │
+                                     ▼
+┌─────────────────────────────────────────────────────────────┐
+│                       NEXUS RESQ                             │
+│                                                             │
+│              Emergency Coordination Layer                   │
+└─────────────────────────────────────────────────────────────┘
+                                     │
+              ┌──────────────────────┼──────────────────────┐
+              │                      │                      │
+              ▼                      ▼                      ▼
+      ┌───────────────┐      ┌───────────────┐      ┌────────────────┐
+      │   RESPONDER   │      │   AUTHORITY   │      │ RESOURCE MGR   │
+      │               │      │               │      │                │
+      │ Missions      │      │ Command       │      │ Shelters       │
+      │ Navigation    │      │ Intelligence  │      │ Supplies       │
+      │ Resources     │      │ Dispatch      │      │ Ambulances     │
+      │ Alerts        │      │ Evacuation    │      │ Equipment      │
+      └───────────────┘      │ Operations    │      └────────────────┘
+                             └───────┬───────┘
+                                     │
+                                     ▼
+                         ┌──────────────────────┐
+                         │  AI ORCHESTRATION    │
+                         │                      │
+                         │     11 AGENTS        │
+                         └──────────┬───────────┘
+                                    │
+                                    ▼
+                         ┌──────────────────────┐
+                         │ HUMAN APPROVAL       │
+                         │                      │
+                         │ Approve / Reject     │
+                         └──────────┬───────────┘
+                                    │
+                                    ▼
+                         ┌──────────────────────┐
+                         │ RESPONSE EXECUTION   │
+                         └──────────┬───────────┘
+                                    │
+                                    ▼
+                         ┌──────────────────────┐
+                         │ CONTINUOUS MONITORING │
+                         └──────────┬───────────┘
+                                    │
+                                    ▼
+                         ┌──────────────────────┐
+                         │ NEW RESPONSE PLAN    │
+                         └──────────────────────┘
+````
 
-The help seeker can receive relevant:
+---
 
-* Emergency instructions
+# 11-Agent AI Orchestration
+
+One of the core components of Nexus ResQ is its **11-stage AI orchestration pipeline**.
+
+The agents operate sequentially rather than presenting a static collection of independent AI outputs.
+
+## Group A — Predictive Intelligence
+
+The predictive intelligence layer continuously evaluates incoming information and prepares the system for changing disaster conditions.
+
+### 1. Continuous Ingestion
+
+Collects incoming operational information from available data sources.
+
+Inputs can include:
+
+* Disaster events
+* Weather information
+* Incident reports
+* Resource state
+* Responder updates
+* Road conditions
 * Location information
-* Evacuation guidance
-* Shelter information
-* Request status
-* Response updates
+* Operational events
 
 ---
 
-# 🚑 Responder Experience
+### 2. Verification
 
-Responders receive a dedicated field-oriented interface.
+Evaluates incoming information before it is used for operational decisions.
 
-The responder experience prioritizes:
+The purpose is to reduce the possibility of unverified information influencing a response plan.
 
-* Current assignment
+---
+
+### 3. Situation
+
+Builds an operational understanding of the current disaster situation.
+
+It considers:
+
 * Incident location
-* Navigation
+* Affected areas
 * Severity
-* ETA
-* Team information
-* Required resources
-* Operational instructions
-* Status updates
-
-### Mission lifecycle
-
-```text
-AVAILABLE
-    ↓
-ASSIGNED
-    ↓
-EN ROUTE
-    ↓
-ON SCENE
-    ↓
-ASSISTING
-    ↓
-COMPLETED
-```
-
-The interface is optimized for rapid decisions rather than analytics.
+* Nearby hazards
+* Population impact
+* Existing deployments
+* Available infrastructure
 
 ---
 
-# 🤝 Volunteer Experience
+### 4. Priority
 
-Volunteers form a separate operational community.
+Determines the relative urgency of incidents.
 
-A volunteer can maintain:
+Typical priority levels include:
 
-* Skills
-* Availability
-* Location
+```text
+CRITICAL
+HIGH
+MODERATE
+```
+
+Incidents requiring dispatch are prioritized for command visibility.
+
+---
+
+### 5. Resource
+
+Determines what resources may be required.
+
+Examples include:
+
+* Ambulances
+* Search & rescue teams
+* Medical units
 * Equipment
-* Response area
-* Relevant qualifications
-
-The system can surface appropriate community tasks such as:
-
-* Supply distribution
-* Shelter assistance
-* Community verification
-* Logistics support
-* Information collection
-* Other authorized support activities
-
-Sensitive operational information remains restricted according to permissions.
-
----
-
-# 🎛️ Command & Dispatch
-
-The command environment is designed around the **Command Orbit** concept.
-
-Instead of presenting every piece of information simultaneously, the operator can move through operational modes:
-
-```text
-OBSERVE
-   ↓
-RESPOND
-   ↓
-EVACUATE
-   ↓
-RESOURCES
-   ↓
-INTELLIGENCE
-```
-
-The central spatial environment provides a unified operational picture while contextual information appears when required.
-
----
-
-# 🌐 The ResQ Sphere
-
-At the heart of the command experience is the **ResQ Sphere**.
-
-It acts as a spatial representation of the operational environment.
-
-Different layers can represent:
-
-* Active incidents
-* Risk
-* Responders
 * Shelters
-* Resources
-* Evacuation corridors
-* Population pressure
-* Operational changes
+* Supplies
+* Specialized rescue assets
 
-The system is designed to move from:
+---
+
+### 6. Capacity
+
+Checks whether required resources are actually available.
+
+The system should consider current resource availability rather than assuming that resources exist.
+
+---
+
+### 7. Route
+
+Determines viable routes for responders and emergency resources.
+
+The system is designed around **safety-first routing** rather than simply choosing the shortest route.
+
+---
+
+### 8. Forecast
+
+Evaluates changing conditions and potential future risks.
+
+This allows response plans to account for conditions that may deteriorate after the initial decision.
+
+---
+
+### 9. Coordinator
+
+Combines the preceding intelligence into a proposed response plan.
+
+Example actions can include:
 
 ```text
-REGION
-  ↓
-CITY
-  ↓
-ZONE
-  ↓
-INCIDENT
+1. Dispatch rescue unit
+2. Deploy medical resources
+3. Establish exclusion perimeter
+4. Initiate evacuation
+5. Activate emergency shelter
 ```
 
-without forcing the operator to leave the spatial environment.
+---
+
+### 10. Critic
+
+Reviews the proposed response plan before human authorization.
+
+The critic evaluates factors such as:
+
+* Risk flags
+* Resource fit
+* Route availability
+* Existing deployments
+* Conflicting operations
+* AI confidence
+* Operational constraints
 
 ---
 
-# 🧠 AI Disaster Intelligence
+### 11. Analytics
 
-Nexus ResQ treats AI as **decision support**, not as an unexplained automation layer.
+Provides final operational analysis after the preceding stages have completed.
 
-Potential intelligence capabilities include:
-
-### Risk Prediction
-
-Estimate disaster risk using available environmental, geographic, historical and incident signals.
-
-### Incident Prioritization
-
-Assist operators in determining which incidents require attention based on:
-
-* Severity
-* Urgency
-* Exposure
-* Available response capacity
-* Confidence
-
-### Evacuation Intelligence
-
-Assist with:
-
-* Risk-zone identification
-* Safe-zone discovery
-* Evacuation routes
-* Alternative routes
-* Shelter pressure
-
-### Resource Intelligence
-
-Estimate:
-
-* Resource demand
-* Supply pressure
-* Potential shortages
-* Allocation requirements
-
-### Anomaly Detection
-
-Identify unusual patterns in incoming reports and operational activity.
+Analytics is intentionally treated as a downstream stage rather than being shown as completed before the rest of the pipeline.
 
 ---
 
-# 🔍 Explainable AI
+# Human-Supervised AI
 
-AI output should never appear as a meaningless percentage.
+Nexus ResQ is designed around **human-supervised emergency decision making**.
 
-Where supported, intelligence outputs should include:
+AI agents can analyze information and prepare a response plan, but consequential response execution requires human authorization where configured.
+
+The operational sequence is:
 
 ```text
-Prediction
-Risk Category
-Confidence
-Timestamp
-Model Version
-Contributing Signals
-Affected Area
-Trend
+Incident
+   ↓
+11-Agent Analysis
+   ↓
+Response Plan
+   ↓
+Critic Review
+   ↓
+Human Approval Required
+   ↓
+┌───────────────────┐
+│                   │
+▼                   ▼
+APPROVE            REJECT
+│                   │
+▼                   ▼
+EXECUTE            STOP / REVIEW
 ```
 
-The system clearly distinguishes:
+The system explicitly distinguishes between:
 
-### CONFIRMED OPERATIONAL INFORMATION
+**AI recommendation**
 
-from
+and
 
-### AI-GENERATED INTELLIGENCE
+**authorized operational action**
 
-This distinction is fundamental to trustworthy emergency decision support.
+This prevents the AI pipeline from being represented as an autonomous authority.
 
 ---
 
-# 🧪 Scenario Mode
+# Continuous Response Planning
 
-Authorized operational users can use a separate simulation environment to explore hypothetical situations.
+Nexus ResQ is not intended to stop after a single plan reaches `11/11`.
+
+During an active disaster, conditions can change continuously.
 
 For example:
 
 ```text
-"What happens if the current risk zone expands?"
+PLAN #001
+    ↓
+11 AGENTS
+    ↓
+HUMAN APPROVAL
+    ↓
+EXECUTION
+    ↓
+LIVE MONITORING
+    ↓
+NEW INCIDENT / HAZARD / RESOURCE CHANGE
+    ↓
+PLAN #002
+    ↓
+11 AGENTS
+    ↓
+HUMAN APPROVAL
+    ↓
+EXECUTION
+    ↓
+...
 ```
 
-The system can evaluate possible effects on:
+Each new plan can use updated information such as:
 
-* Population exposure
-* Shelters
-* Evacuation routes
-* Responder demand
-* Resource requirements
+* New incidents
+* Changed weather
+* New road hazards
+* Changed resource availability
+* New responder locations
+* Shelter occupancy
+* Supply levels
+* Ambulance availability
+* Evacuation requirements
 
-Simulation changes must never modify live operational data.
-
-> **SIMULATION ≠ LIVE OPERATIONS**
+This creates a continuous operational response loop.
 
 ---
 
-# 🗺️ Geospatial Intelligence
+# Emergency Assistance
 
-Nexus ResQ uses geospatial data as a core part of its architecture.
+The public-facing emergency flow is designed to provide immediate access to assistance.
 
-The platform can support:
+The emergency flow can collect:
 
-* Location tracking
-* Proximity analysis
-* Geofencing
-* Risk zones
-* Safe zones
+* Assistance category
+* Location
+* GPS coordinates
+* Emergency details
+* Relevant contact information
+
+The request is persisted in the backend and can become part of the operational incident workflow.
+
+---
+
+# Location & GPS
+
+Nexus ResQ uses device location capabilities where permission is available.
+
+Location information can support:
+
+* Emergency requests
+* Incident positioning
 * Shelter discovery
-* Responder proximity
-* Evacuation corridors
-* Affected-area analysis
+* Safe-route calculation
+* Responder navigation
+* Command situational awareness
 
-PostGIS provides the spatial database capabilities required for operational geographic queries.
+Location data should be handled according to applicable privacy, security and legal requirements.
 
 ---
 
-# ⚡ Real-Time Operations
+# Safe Route Intelligence
 
-Emergency response changes continuously.
+A central requirement of Nexus ResQ is that emergency vehicles should not simply receive the shortest route.
 
-Nexus ResQ is designed to support real-time synchronization for:
+The system should prioritize:
 
-* SOS requests
-* Incidents
-* Responder locations
-* Dispatch assignments
+> **Safety over distance.**
+
+Multiple candidate routes can be evaluated.
+
+Example:
+
+```text
+Route A
+Distance: 8 km
+Hazard: Flood
+Safety: 25/100
+Status: UNSAFE
+
+Route B
+Distance: 11 km
+Hazard: None detected
+Safety: 91/100
+Status: SAFE
+
+Route C
+Distance: 9 km
+Hazard: Fire proximity
+Safety: 48/100
+Status: CAUTION
+```
+
+The system should prefer **Route B**, even though it is not the shortest route.
+
+---
+
+## Dynamic Route Re-evaluation
+
+Routing should not be treated as a one-time operation.
+
+During an active mission:
+
+```text
+AMBULANCE
+    ↓
+CURRENT ROUTE
+    ↓
+CONTINUOUS MONITORING
+    ↓
+NEW ROAD HAZARD
+    ↓
+ROUTE SAFETY SCORE CHANGES
+    ↓
+RECALCULATE
+    ↓
+SAFER ALTERNATIVE
+    ↓
+RESPONDER NAVIGATION
+```
+
+Possible route intelligence inputs include:
+
+* Road network data
+* Traffic information
+* Weather conditions
+* Disaster zones
+* Road closures
+* Responder reports
+* Incident proximity
+* Evacuation zones
+* Known obstructions
+
+---
+
+# Mapping
+
+The platform is designed to integrate map and routing services for operational visualization.
+
+The map interface can support:
+
+* Current location
+* Incident locations
+* Resource locations
+* Shelters
+* Emergency routes
+* Route alternatives
+* Hazard areas
+* Disaster zones
+* Operational markers
+
+Map providers and API credentials are configured through environment variables and should never be committed to the repository.
+
+---
+
+# Weather Intelligence
+
+Weather information is used as an additional operational signal.
+
+## Citizen
+
+The citizen interface can display weather information relevant to the user's current location.
+
+## Authority
+
+Command authorities can inspect weather conditions for operationally relevant areas.
+
+Weather information can contribute to:
+
+* Flood risk
+* Storm conditions
+* Visibility
+* Temperature
+* Wind conditions
+* Disaster planning
+* Route safety assessment
+
+Weather information should be treated as one input into operational decision-making rather than as the sole source of truth.
+
+---
+
+# Resource Management
+
+The Resource Manager interface is designed to maintain operational visibility over:
+
+### Shelters
+
+* Shelter location
+* Capacity
+* Occupancy
+* Availability
+
+### Supplies
+
+* Supply type
+* Quantity
+* Availability
+* Allocation
+
+### Ambulances
+
+* Unit identity
+* Availability
+* Assignment
+* Current operational status
+
+### Equipment
+
+* Equipment type
+* Quantity
+* Availability
+* Assignment
+
+---
+
+# Real-Time Resource Updates
+
+Resource state should reflect operational changes.
+
+For example:
+
+```text
+Shelter Capacity
+280
+
+Occupancy
+140
+
+Available
+140
+```
+
+If an evacuation plan is executed:
+
+```text
+Occupancy
+140 → 180
+```
+
+The Resource Manager should reflect the updated operational state.
+
+---
+
+# Resource Dispatch
+
+Resource requests are handled through the command workflow.
+
+The Authority/Command side can determine:
+
+* What resource is required
+* How much is required
+* Where it is required
+* Which units should be dispatched
+
+The Resource Manager maintains the operational record of approved dispatches and resource movements.
+
+---
+
+# Citizen Features
+
+The Citizen interface focuses on immediate access to safety information.
+
+### Core features
+
+* Emergency assistance
+* Emergency reporting
 * Alerts
-* Shelter capacity
-* Resource availability
-* Evacuation changes
+* Shelters
+* Safe routes
+* Weather
+* Emergency history
+* Account/profile
 
-Connection state should remain visible:
+The emergency action is intentionally prominent so that users do not need to navigate through multiple pages during a crisis.
+
+---
+
+# Responder Features
+
+The Responder interface is designed around field operations.
+
+### Core features
+
+* Missions
+* Incidents
+* Navigation
+* Resources
+* Alerts
+* Mission status
+* Emergency history
+* Profile
+
+Responders can receive assigned missions and update operational status.
+
+---
+
+# Authority / Command Features
+
+The Authority interface provides the primary command environment.
+
+### Command
+
+Central operational overview containing:
+
+* Active incidents
+* Priority incidents
+* Resource status
+* AI orchestration progress
+* Operational state
+* Critical alerts
+
+### Incidents
+
+Provides detailed incident information and prioritization.
+
+### Intelligence
+
+Provides AI-generated operational intelligence and agent orchestration.
+
+### Dispatch
+
+Provides dispatch planning and resource assignment.
+
+### Evacuation
+
+Provides evacuation planning and affected-area information.
+
+### Operations
+
+Provides operational status and ongoing response activity.
+
+### Weather
+
+Allows command personnel to inspect weather conditions relevant to operational areas.
+
+---
+
+# AI Orchestration Interface
+
+The command interface provides visibility into the 11-agent pipeline.
+
+Example:
 
 ```text
-LIVE
-RECONNECTING
-STALE
-OFFLINE
+AI ORCHESTRATION
+
+11 / 11
+
+11 DONE
+0 RUNNING
+0 WAITING
+
+✓ Continuous Ingestion     COMPLETE
+✓ Verification             COMPLETE
+✓ Situation                COMPLETE
+✓ Priority                 COMPLETE
+✓ Resource                 COMPLETE
+✓ Capacity                 COMPLETE
+✓ Route                    COMPLETE
+✓ Forecast                 COMPLETE
+✓ Coordinator              COMPLETE
+✓ Critic                   COMPLETE
+✓ Analytics                COMPLETE
 ```
 
-The database remains the authoritative source of operational state.
+During execution, the status should reflect the actual stage being processed rather than displaying a permanently completed state.
 
 ---
 
-# 🏗️ System Architecture
+# Human Approval Workflow
+
+When the AI pipeline completes a response plan, the Authority receives a human-approval request.
+
+The approval request can contain:
+
+* Incident ID
+* Incident type
+* Severity
+* Affected zone
+* AI confidence
+* Risk flags
+* Resource fit
+* Route status
+* Proposed response actions
+* Operational notes
+
+Example:
 
 ```text
-                         ┌──────────────────────┐
-                         │      HELP SEEKER     │
-                         └──────────┬───────────┘
-                                    │
-                         ┌──────────▼───────────┐
-                         │     NEXUS RESQ UI    │
-                         │ React + TypeScript   │
-                         │ 3D Spatial Interface │
-                         └──────────┬───────────┘
-                                    │
-                   ┌────────────────┴────────────────┐
-                   │                                 │
-             REST APIs                         WebSockets
-                   │                                 │
-                   └────────────────┬────────────────┘
-                                    │
-                         ┌──────────▼───────────┐
-                         │      FastAPI API     │
-                         │ Authentication/RBAC  │
-                         │ Business Logic       │
-                         └──────────┬───────────┘
-                                    │
-             ┌──────────────────────┼──────────────────────┐
-             │                      │                      │
-     ┌───────▼────────┐    ┌────────▼───────┐    ┌───────▼────────┐
-     │ PostgreSQL +   │    │     Redis      │    │  AI / ML Layer │
-     │    PostGIS     │    │ Cache / Events │    │ Predictions    │
-     └────────────────┘    └────────────────┘    └────────────────┘
-             │                      │                      │
-             └──────────────────────┼──────────────────────┘
-                                    │
-                         ┌──────────▼───────────┐
-                         │ External Integrations│
-                         │ Weather / Maps /     │
-                         │ Hazard / Alerts      │
-                         └──────────────────────┘
+HUMAN APPROVAL REQUIRED
+
+AI RESPONSE PLAN
+
+11-AGENT PIPELINE
+11 OF 11 COMPLETE
+
+INCIDENT CONTEXT
+INCIDENT: INC-XXXX
+SEVERITY: CRITICAL
+
+CRITIC ASSESSMENT
+AI CONFIDENCE: 94%
+RESOURCE FIT: CONFIRMED
+ROUTE CLEAR: YES
+
+PROPOSED RESPONSE PLAN
+1. Dispatch rescue team
+2. Deploy medical units
+3. Establish exclusion perimeter
+4. Issue evacuation broadcast
+5. Activate emergency shelter
+
+[ APPROVE & EXECUTE ]
+
+[ REJECT PLAN ]
 ```
 
----
-
-# 🧩 Core Backend Modules
-
-The backend is structured around operational domains including:
-
-* Authentication & Authorization
-* User & Organization Management
-* Incident Management
-* SOS Processing
-* Geospatial Services
-* Risk Intelligence
-* AI Prediction
-* Evacuation Management
-* Rescue Dispatch
-* Resource Management
-* Shelter Management
-* Volunteer Management
-* Alerts & Notifications
-* Citizen Reports
-* External Data Integration
-* Real-Time Communication
-* Audit Logging
-* Analytics & Reporting
+The approval decision is persisted in the backend.
 
 ---
 
-# 🛠️ Technology Stack
+# Authentication & Security
+
+Nexus ResQ uses role-based authentication.
+
+Authentication includes:
+
+* User registration
+* Login
+* JWT-based authentication
+* Logout
+* Role-based authorization
+* Protected operational routes
+* Password hashing
+* User profile management
+
+Passwords must never be stored as plaintext.
+
+---
+
+# Password Requirements
+
+Account passwords must satisfy the configured security requirements.
+
+Minimum requirements:
+
+```text
+✓ At least 8 characters
+✓ At least 1 uppercase letter
+✓ At least 1 digit
+✓ At least 1 special character
+```
+
+Passwords that do not satisfy these requirements must not be accepted.
+
+The backend stores only the hashed password.
+
+---
+
+# Database
+
+Nexus ResQ uses PostgreSQL for persistent application data.
+
+Primary database:
+
+```text
+nexus_resq_db
+```
+
+The database is responsible for persistent operational information including, where applicable:
+
+* Users
+* Authentication data
+* Incidents
+* Emergency requests
+* Missions
+* Resources
+* Shelters
+* Supplies
+* Ambulances
+* Equipment
+* Dispatch records
+* AI execution state
+* AI plans
+* Human approvals
+* Alerts
+* Notifications
+* Weather-related operational records
+* History
+* Audit information
+
+The exact schema should be treated as implementation-specific and maintained through the project's database setup/migration system.
+
+---
+
+# Data Integrity Principle
+
+Nexus ResQ follows a strict operational rule:
+
+> **Frontend data should originate from the backend/database or an explicitly configured live external data source.**
+
+The frontend should not use fabricated operational data as a substitute for unavailable backend data.
+
+If live data is unavailable, the application should expose the appropriate unavailable/error state rather than silently presenting fake operational information.
+
+---
+
+# Real-Time Synchronization
+
+Operational interfaces can periodically synchronize with the backend.
+
+The synchronization indicator represents the time since the most recent backend data refresh rather than the amount of time the browser has been open.
+
+Example:
+
+```text
+SYNCED 3s AGO
+SYNCED 8s AGO
+SYNCED 21s AGO
+```
+
+The synchronization cycle should reset when fresh backend data is successfully received.
+
+---
+
+# API Architecture
+
+The frontend communicates with backend APIs for operational data.
+
+Typical API domains include:
+
+```text
+/auth
+/users
+/incidents
+/emergency
+/missions
+/resources
+/shelters
+/supplies
+/ambulances
+/equipment
+/dispatch
+/routes
+/weather
+/alerts
+/notifications
+/ai
+/approvals
+/history
+```
+
+The exact endpoint structure is implementation-dependent.
+
+API contracts should remain backward-compatible wherever possible.
+
+---
+
+# Technology Stack
 
 ## Frontend
 
-| Technology        | Purpose                     |
-| ----------------- | --------------------------- |
-| React             | Application UI              |
-| TypeScript        | Type-safe development       |
-| Vite              | Frontend tooling            |
-| Three.js          | 3D rendering                |
-| React Three Fiber | React-based 3D architecture |
-| Drei              | 3D utilities                |
-| TanStack Query    | Server-state management     |
-| Zustand           | UI/application state        |
-| React Hook Form   | Form management             |
-| Zod               | Schema validation           |
-| Motion            | Interface transitions       |
+* React 19
+* TypeScript
+* Vite
+* Modern CSS/UI system
+* Client-side routing
+* Real-time API synchronization
 
 ## Backend
 
-| Technology | Purpose                     |
-| ---------- | --------------------------- |
-| Python     | Backend language            |
-| FastAPI    | REST API framework          |
-| PostgreSQL | Primary database            |
-| PostGIS    | Geospatial operations       |
-| Redis      | Caching and transient state |
-| WebSockets | Real-time communication     |
-| Alembic    | Database migrations         |
-| Pydantic   | Validation                  |
-| SQLAlchemy | Database ORM                |
+* Node.js
+* Express
+* TypeScript
+* REST APIs
+* JWT authentication
+* PostgreSQL
+* Server-Sent Events / real-time communication where configured
 
-## AI / Data
+## Database
 
-The AI layer is designed to remain modular so models can evolve independently from the transactional backend.
+* PostgreSQL
 
-Potential model services include:
+## Mapping & Routing
 
-* Risk prediction
-* Incident classification
-* Priority scoring
-* Resource demand prediction
-* Evacuation intelligence
-* Anomaly detection
+* OpenStreetMap-based geographic data
+* Routing engine integration
+* External map/routing APIs where configured
 
----
+## AI
 
-# 🔐 Security
-
-Emergency infrastructure requires server-side authorization and traceability.
-
-Nexus ResQ is designed around:
-
-* JWT-based authentication
-* Role-Based Access Control
-* Object-level authorization
-* Secure password hashing
-* Token expiration and revocation
-* Rate limiting
-* Input validation
-* Secure file handling
-* Audit logging
-* HTTPS
-* Environment-based secrets
-* Restricted operational data
-
-The frontend never replaces backend authorization.
+* 11-stage orchestration architecture
+* Predictive intelligence
+* Operational response planning
+* Human-supervised execution
 
 ---
 
-# 📁 Project Structure
+# Project Structure
 
 ```text
-nexus-resq/
+Nexus ResQ/
+│
+├── backend/
+│   ├── src/
+│   │   ├── ...
+│   │   └── server.ts
+│   │
+│   ├── package.json
+│   └── .env.example
 │
 ├── frontend/
 │   ├── src/
-│   │   ├── app/
-│   │   ├── components/
-│   │   │   ├── 3d/
-│   │   │   ├── ui/
-│   │   │   └── operations/
-│   │   ├── features/
-│   │   │   ├── auth/
-│   │   │   ├── incidents/
-│   │   │   ├── sos/
-│   │   │   ├── response/
-│   │   │   ├── evacuation/
-│   │   │   ├── resources/
-│   │   │   ├── intelligence/
-│   │   │   ├── shelters/
-│   │   │   ├── volunteers/
-│   │   │   └── reports/
-│   │   ├── pages/
-│   │   ├── api/
-│   │   ├── realtime/
-│   │   ├── store/
-│   │   ├── hooks/
-│   │   ├── types/
-│   │   ├── utils/
-│   │   └── styles/
+│   │   ├── ...
+│   │   └── main.*
 │   │
-│   └── package.json
+│   ├── package.json
+│   └── ...
 │
-├── backend/
-│   ├── app/
-│   │   ├── api/
-│   │   ├── core/
-│   │   ├── models/
-│   │   ├── schemas/
-│   │   ├── services/
-│   │   ├── repositories/
-│   │   ├── ai/
-│   │   ├── geospatial/
-│   │   ├── integrations/
-│   │   ├── workers/
-│   │   └── websockets/
-│   │
-│   ├── alembic/
-│   ├── tests/
-│   └── requirements.txt
-│
-├── docs/
-├── .env.example
+├── package.json
 ├── .gitignore
-├── docker-compose.yml
 └── README.md
 ```
 
+The repository structure may evolve as the platform develops.
+
 ---
 
-# 🚀 Getting Started
+# Local Development
 
 ## Prerequisites
 
-Make sure the following are installed:
+Install:
 
 * Node.js
-* npm / pnpm / yarn
-* Python 3.x
+* npm
 * PostgreSQL
-* PostGIS
-* Redis
 * Git
 
----
-
-## Clone the Repository
+Verify Node.js:
 
 ```bash
-git clone https://github.com/<your-username>/nexus-resq.git
-cd nexus-resq
+node --version
+```
+
+Verify npm:
+
+```bash
+npm --version
+```
+
+Verify PostgreSQL:
+
+```bash
+psql --version
 ```
 
 ---
 
-# 💻 Frontend Setup
+# Environment Variables
 
-```bash
-cd frontend
-npm install
-npm run dev
-```
+Environment files are intentionally excluded from Git.
 
-The frontend will start using the development server configured by the project.
-
----
-
-# ⚙️ Backend Setup
-
-```bash
-cd backend
-
-python -m venv venv
-```
-
-### Windows
-
-```bash
-venv\Scripts\activate
-```
-
-### Linux / macOS
-
-```bash
-source venv/bin/activate
-```
-
-Install dependencies:
-
-```bash
-pip install -r requirements.txt
-```
-
-Run migrations:
-
-```bash
-alembic upgrade head
-```
-
-Start the API:
-
-```bash
-uvicorn app.main:app --reload
-```
-
----
-
-# 🔑 Environment Variables
-
-Create environment files from the provided example configuration.
-
-Typical configuration includes:
+Typical environment configuration may include:
 
 ```env
-DATABASE_URL=
-REDIS_URL=
-JWT_SECRET=
-ACCESS_TOKEN_EXPIRE_MINUTES=
-REFRESH_TOKEN_EXPIRE_DAYS=
-MAP_API_KEY=
-WEATHER_API_KEY=
+DATABASE_URL=postgresql://username:password@localhost:5432/nexus_resq_db
+JWT_SECRET=your_secure_secret
+PORT=8000
 ```
 
-Never commit real secrets or production credentials.
+Frontend configuration may include environment-specific API and external service keys.
 
----
+**Never commit real `.env` files or API secrets to GitHub.**
 
-# 🔌 API
-
-The backend follows a versioned API architecture.
+Only safe example configuration should be committed, such as:
 
 ```text
-/api/v1/auth/*
-/api/v1/users/*
-/api/v1/incidents/*
-/api/v1/sos/*
-/api/v1/locations/*
-/api/v1/hazards/*
-/api/v1/ai/*
-/api/v1/evacuation/*
-/api/v1/shelters/*
-/api/v1/dispatch/*
-/api/v1/resources/*
-/api/v1/alerts/*
-/api/v1/reports/*
-/api/v1/volunteers/*
-/api/v1/admin/*
-```
-
-FastAPI can expose interactive API documentation through its configured OpenAPI endpoints during development.
-
----
-
-# 🔄 Core Emergency Workflow
-
-```text
-                  EMERGENCY
-                      │
-                      ▼
-                SOS / REPORT
-                      │
-                      ▼
-              INCIDENT CREATED
-                      │
-                      ▼
-             RISK + PRIORITY AI
-                      │
-                      ▼
-             GEOSPATIAL ANALYSIS
-                      │
-                      ▼
-              RESPONSE MATCHING
-                      │
-                      ▼
-                 DISPATCH
-                      │
-                      ▼
-              RESPONDER ACTION
-                      │
-            ┌─────────┴─────────┐
-            ▼                   ▼
-       RESOURCES             EVACUATION
-            │                   │
-            └─────────┬─────────┘
-                      ▼
-                 RESOLUTION
-                      │
-                      ▼
-                 AUDIT / DATA
+.env.example
 ```
 
 ---
 
-# 📊 Operational Data
+# Running the Project
 
-The platform is designed to treat operational data as authoritative backend state.
-
-Important principles:
-
-* No production-path mock data
-* No fake emergency statistics
-* No frontend-only operational state
-* Critical actions persisted before acknowledgement
-* Server-side authorization
-* Auditability of critical state changes
-* Real-time state synchronized with persisted backend state
-
----
-
-# 🧪 Testing
-
-The project should include multiple levels of testing.
+From the root directory:
 
 ### Backend
 
-* Unit tests
-* API integration tests
-* Authentication tests
-* Authorization tests
-* Database tests
-* Concurrency tests
-* External integration tests
+```bash
+npm run dev:backend
+```
+
+Backend:
+
+```text
+http://localhost:8000
+```
 
 ### Frontend
 
-* Component tests
-* API integration tests
-* Role-based UI tests
-* Real-time synchronization tests
-* Responsive tests
-* Accessibility tests
-* WebGL/3D fallback tests
+Open another terminal:
 
-### End-to-End
+```bash
+npm run dev:frontend
+```
 
-Critical journeys should be tested from:
+Frontend:
 
 ```text
-Help Seeker
-    ↓
-SOS
-    ↓
-Incident
-    ↓
-Dispatcher
-    ↓
-Responder
-    ↓
-Resolution
+http://localhost:5173
 ```
 
 ---
 
-# 📈 Observability
+# Running Services Individually
 
-Operational systems require visibility into their own health.
+## Backend
 
-Important metrics include:
-
-* API latency
-* Error rates
-* SOS processing time
-* Dispatch time
-* Notification delivery
-* WebSocket connectivity
-* Worker failures
-* Database health
-* Resource synchronization
-* Active incidents
-
-Structured logging and correlation IDs should be used to trace critical requests.
-
----
-
-# 🛣️ Roadmap
-
-### Phase 1 — Foundation
-
-* Authentication
-* RBAC
-* PostgreSQL/PostGIS
-* Core API
-* User management
-* SOS
-* Incident lifecycle
-
-### Phase 2 — Response
-
-* Responder management
-* Dispatch
-* Shelters
-* Resources
-* Notifications
-* WebSockets
-
-### Phase 3 — Spatial Experience
-
-* ResQ Sphere
-* Command Orbit
-* 3D incident visualization
-* Responder visualization
-* Risk surfaces
-* Spatial evacuation
-
-### Phase 4 — Intelligence
-
-* Risk prediction
-* Incident prioritization
-* Evacuation intelligence
-* Resource demand prediction
-* Explainable AI
-* Scenario Mode
-
-### Phase 5 — Scale & Resilience
-
-* Advanced observability
-* Load testing
-* Multi-organization operations
-* Improved offline capabilities
-* Advanced analytics
-* Production hardening
-
----
-
-# 🧠 Design Principles
-
-Nexus ResQ follows a few fundamental principles:
-
-### Clarity > Decoration
-
-Emergency software must remain understandable under pressure.
-
-### Action > Information Overload
-
-The interface should help users determine what to do next.
-
-### Real Data > Fake Demonstrations
-
-Operational information must originate from authoritative backend services.
-
-### Explainability > AI Hype
-
-AI recommendations should provide context and confidence wherever possible.
-
-### Safety > Visual Effects
-
-3D and animation should never interfere with emergency actions.
-
-### Context > Dashboards
-
-Information should appear when it is relevant rather than overwhelming the user continuously.
-
----
-
-# 🌍 Vision
-
-Nexus ResQ aims to create a connected emergency-response ecosystem in which information does not remain isolated between citizens, responders, organizations and authorities.
-
-The long-term vision is a system where:
-
-```text
-A person reports a crisis
-          ↓
-The system understands the situation
-          ↓
-Risk is evaluated
-          ↓
-The right response is identified
-          ↓
-The right resources are coordinated
-          ↓
-The right people are informed
-          ↓
-The response is continuously monitored
-          ↓
-The outcome becomes part of the operational record
+```bash
+cd backend
+npm run dev
 ```
 
-Not simply a platform that **reports disasters**.
+## Frontend
 
-A platform that helps coordinate **what happens next**.
-
----
-
-# 🤝 Contributing
-
-Contributions, ideas and improvements are welcome.
-
-Before submitting a contribution:
-
-1. Fork the repository.
-2. Create a feature branch.
-3. Follow the existing architecture.
-4. Add or update tests where appropriate.
-5. Ensure existing functionality is not broken.
-6. Submit a pull request with a clear description of the change.
-
-For major architectural or UX changes, open an issue first to discuss the proposal.
+```bash
+cd frontend
+npm run dev
+```
 
 ---
 
-# 📜 License
+# Database Setup
 
-Nexus ResQ is released under the **MIT License**.
+From the root:
 
-See [`LICENSE`](LICENSE) for details.
+```bash
+npm run db:setup
+```
+
+Or:
+
+```bash
+cd backend
+npm run db:setup
+```
+
+Database configuration must be supplied through environment variables.
 
 ---
 
-# 👨‍💻 Project
+# Type Checking
+
+## Frontend
+
+```bash
+cd frontend
+npx tsc --noEmit
+```
+
+## Backend
+
+```bash
+cd backend
+npm run typecheck
+```
+
+---
+
+# Production Build
+
+Build the frontend:
+
+```bash
+cd frontend
+npm run build
+```
+
+The generated production assets can then be deployed through the selected hosting provider.
+
+---
+
+# Deployment Architecture
+
+The intended deployment architecture is:
+
+```text
+                    USERS
+                      │
+                      ▼
+             ┌─────────────────┐
+             │     VERCEL      │
+             │                 │
+             │    FRONTEND     │
+             │ React + Vite    │
+             └────────┬────────┘
+                      │
+                      │ HTTPS API
+                      ▼
+             ┌─────────────────┐
+             │     RENDER      │
+             │                 │
+             │     BACKEND     │
+             │ Node + Express  │
+             └────────┬────────┘
+                      │
+                      ▼
+             ┌─────────────────┐
+             │   PostgreSQL    │
+             │                 │
+             │ nexus_resq_db   │
+             └─────────────────┘
+```
+
+### Frontend
+
+Recommended hosting:
+
+**Vercel**
+
+### Backend
+
+Recommended hosting:
+
+**Render**
+
+### Database
+
+PostgreSQL can be hosted locally during development or through a managed PostgreSQL provider for production.
+
+---
+
+# Production Security
+
+Before production deployment:
+
+* Never commit `.env`
+* Never expose database passwords
+* Never expose JWT secrets
+* Never expose private API keys
+* Enable HTTPS
+* Restrict database access
+* Configure CORS correctly
+* Validate all API input
+* Hash passwords
+* Apply role-based authorization
+* Validate JWT tokens
+* Implement rate limiting where appropriate
+* Maintain audit logs for sensitive operations
+* Protect emergency and command endpoints
+* Apply appropriate data-retention policies
+
+---
+
+# Operational Safety Principles
+
+Nexus ResQ is designed as a decision-support and coordination platform.
+
+AI recommendations should not automatically be interpreted as legally or operationally authorized actions.
+
+Important operational decisions should remain subject to appropriate human authority.
+
+The platform therefore emphasizes:
+
+```text
+AI ANALYSIS
+     ↓
+AI RECOMMENDATION
+     ↓
+CRITIC REVIEW
+     ↓
+HUMAN AUTHORIZATION
+     ↓
+EXECUTION
+     ↓
+MONITORING
+```
+
+---
+
+# Failure Handling
+
+Emergency systems must expect partial failures.
+
+The architecture should account for:
+
+* API failures
+* External API outages
+* Network interruptions
+* GPS unavailable
+* Weather API unavailable
+* Mapping API unavailable
+* Database connectivity issues
+* Invalid or expired authentication
+* Stale operational data
+* Conflicting resource states
+
+The system should expose an appropriate operational status instead of silently presenting fabricated information.
+
+---
+
+# Auditability
+
+Important operational actions should be traceable.
+
+Examples include:
+
+* Emergency request creation
+* Incident creation
+* Mission assignment
+* Resource dispatch
+* AI plan creation
+* AI plan completion
+* Human approval
+* Human rejection
+* Plan execution
+* Resource status changes
+* Mission status changes
+
+A future production deployment should maintain appropriate audit logs for command and emergency actions.
+
+---
+
+# Design Philosophy
+
+Nexus ResQ is designed around emergency operations rather than conventional dashboard design.
+
+The interface prioritizes:
+
+### Clarity
+
+Critical information should be visible without unnecessary reading.
+
+### Speed
+
+Emergency workflows should require minimal interaction.
+
+### Situational awareness
+
+Maps, incidents, resources and hazards should be understandable at a glance.
+
+### Human oversight
+
+AI should assist decision-makers rather than silently replacing them.
+
+### Continuous operation
+
+Disaster response is dynamic and must continuously adapt to changing conditions.
+
+### Data integrity
+
+Operational information must come from reliable data sources.
+
+---
+
+# Future Development
+
+Potential future capabilities include:
+
+* Multi-agency interoperability
+* Advanced GIS layers
+* Satellite imagery
+* IoT sensor integration
+* Drone telemetry
+* Computer vision for disaster assessment
+* Automated damage detection
+* Predictive evacuation modeling
+* Advanced traffic intelligence
+* Dedicated responder mobile application
+* Offline emergency operation
+* Mesh-network communication
+* Public warning integration
+* Government emergency-system interoperability
+* Advanced resource optimization
+* Historical disaster analytics
+* Post-disaster recovery planning
+
+---
+
+# Project Vision
+
+Nexus ResQ aims to evolve from a disaster-response prototype into a unified emergency coordination platform capable of supporting government agencies, emergency responders, communities and citizens during large-scale disasters.
+
+The long-term objective is to create a system where:
+
+```text
+DATA
+ ↓
+INTELLIGENCE
+ ↓
+DECISION
+ ↓
+HUMAN AUTHORIZATION
+ ↓
+ACTION
+ ↓
+MONITORING
+ ↓
+ADAPTATION
+```
+
+happens continuously within a single coordinated platform.
+
+---
+
+# Important Disclaimer
+
+Nexus ResQ is a technology prototype and research/development project.
+
+It should not be treated as a certified emergency-management, dispatch, navigation, medical, governmental or life-safety system without appropriate:
+
+* Government authorization
+* Security assessment
+* Reliability testing
+* GIS validation
+* Disaster-management validation
+* Legal review
+* Privacy review
+* Infrastructure testing
+* Operational certification
+* Human-in-the-loop procedures
+* Fail-safe mechanisms
+
+External map, weather, traffic and routing services may have their own availability, accuracy and licensing limitations.
+
+For real-world deployment, all operational decisions must remain subject to qualified emergency-management personnel and applicable laws and regulations.
+
+---
+
+# Contributing
+
+Contributions are welcome.
+
+Before submitting changes:
+
+1. Understand the existing architecture.
+2. Avoid unnecessary changes to working functionality.
+3. Maintain existing API contracts where possible.
+4. Do not introduce mock operational data.
+5. Do not commit credentials or secrets.
+6. Test both frontend and backend.
+7. Run TypeScript validation.
+8. Test database interactions.
+9. Verify authentication and authorization.
+10. Document significant architectural changes.
+
+---
+
+# Development Commands
+
+| Purpose            | Command                           |
+| ------------------ | --------------------------------- |
+| Start backend      | `npm run dev:backend`             |
+| Start frontend     | `npm run dev:frontend`            |
+| Database setup     | `npm run db:setup`                |
+| Frontend typecheck | `cd frontend && npx tsc --noEmit` |
+| Backend typecheck  | `cd backend && npm run typecheck` |
+| Frontend build     | `cd frontend && npm run build`    |
+
+---
+
+# Repository
 
 **Nexus ResQ**
 
-AI-powered disaster intelligence and emergency response platform.
+National Emergency Coordination & Response Platform
 
-Built with a focus on:
-
-**Artificial Intelligence • Geospatial Intelligence • Real-Time Systems • Emergency Response • 3D Interfaces • Human-Centered Design**
+Built as an AI-assisted disaster coordination and emergency-response platform.
 
 ---
 
 <p align="center">
   <strong>NEXUS RESQ</strong><br>
-  <em>Observe. Understand. Decide. Respond.</em>
+  AI-ASSISTED · REAL-TIME · MULTI-AGENCY · HUMAN-SUPERVISED
 </p>
+```
