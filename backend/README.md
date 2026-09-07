@@ -1,66 +1,201 @@
-# Nexus ResQ — Backend Services & Database
+# Nexus ResQ — Backend REST API & Database Services
 
-Convex-powered serverless backend, real-time database, and operational API endpoints for **Nexus ResQ**.
+Production-ready Node.js, Express, and PostgreSQL backend service providing REST API endpoints, real-time Server-Sent Events (SSE), and database persistence for the **Nexus ResQ** Disaster Intelligence & Emergency Response Platform.
 
-## Database Schema (18 Tables)
+---
 
-- `users`: User profiles, credentials, operational roles, phone & coordinates
-- `disasterEvents`: Active emergencies (floods, earthquakes, fires, landslides)
-- `sensorReadings`: Environmental telemetry (rainfall, river level, seismic, wind)
-- `riskZones`: Geofenced risk scores (0-100), vulnerability metrics, boundary polygons
-- `shelters`: Shelter locations, live capacity, occupancy, medical support, amenities
-- `rescueTeams`: Specialized units (flood, medical, SAR), status, equipment, location
-- `resources`: Asset inventory (food, water, medical kits, rescue gear, boats)
-- `emergencyMissions`: Real-time incident dispatch records and operational assignments
-- `citizenReports`: Verified citizen SOS inputs and incident reports
-- `alerts`: Multi-channel public and authority emergency alerts
-- `notifications`: SMS/App/Email push notifications for field personnel & citizens
-- `evacuationRoutes`: Primary/secondary corridors with live safety scores and congestion
-- `hospitals`: Critical care capacity, available beds, ICU status, ambulances
-- `roadsAndInfrastructure`: Bridge, road, and power infrastructure blockage tracking
-- `auditLogs`: Immutable compliance audit trail of critical operational actions
-- `aiRecommendations`: AI-generated action plans pending or granted human approval
-- `ambulances`: Emergency medical transport fleet status and GPS updates
-- `dispatchRecords`: Inter-agency dispatch logs between Command & Resource Management
+## Technology Stack
 
-## API Endpoints
+- **Runtime & Framework**: Node.js (v18+) with Express 4
+- **Language**: TypeScript 5 with execution via `tsx`
+- **Database**: PostgreSQL with native connection pooling (`pg`)
+- **Authentication**: Stateless JSON Web Tokens (`jsonwebtoken`) with `bcryptjs` password hashing
+- **Real-Time Communication**: Server-Sent Events (SSE) on `/api/events`
+- **CORS & Environment**: Configured via `cors` and `dotenv`
 
-- `disasters.ts`: Disaster lifecycle queries and mutations
-- `alerts.ts`: Broadcast, active alert retrieval, and severity filters
-- `missions.ts`: Mission creation, triage assignment, responder status tracking
-- `reports.ts`: Citizen emergency submissions and report verification
-- `resources.ts`: Resource allocation, inventory replenishment, and dispatching
-- `shelters.ts`: Capacity adjustments, occupancy check-ins, nearby shelter queries
-- `hospitals.ts`: Bed availability queries and status updates
-- `zones.ts`: Zone priority rankings, risk level evaluations
-- `simulations.ts`: What-if simulation runs with casualty and damage projections
-- `teams.ts`: Rescue team deployment and availability management
-- `users.ts`: Role-based authentication and user profiles
-- `notifications.ts`: Notification dispatch and read confirmations
-- `audit.ts`: Operational compliance audit logging
+---
+
+## Database Architecture & Schema
+
+The backend uses PostgreSQL as the single source of operational truth. All operational tables are defined in `src/db/schema.sql` and managed through migration scripts in `src/db/`.
+
+### Core Tables
+
+| Table | Description |
+|---|---|
+| `users` | User accounts, hashed passwords, contact numbers, departments, and operational roles (`citizen`, `responder`, `authority_command`, `resource_manager`). |
+| `incidents` | Core emergency incidents, severity ranking (`CRITICAL`, `HIGH`, `MEDIUM`, `LOW`), classification (`flood`, `fire`, `earthquake`, `medical`), GPS coordinates, and lifecycle status. |
+| `emergency_requests` | Citizen SOS requests submitted via mobile/web, assistance types needed, GPS coordinates, accuracy, contact information, and resolution state. |
+| `shelters` | Relief shelter locations, live capacity, current occupancy, medical support capability, and available amenities. |
+| `evacuation_routes` | Evacuation corridors, waypoints, live safety ratings (`SAFE`, `CAUTION`, `HIGH_RISK`, `BLOCKED`), and congestion scores. |
+| `alerts` | Broadcast emergency alerts, severity tiers, target zones, and active flags. |
+| `responders` | Field responder personnel and units, specialization (`SAR`, `MEDICAL`, `EVACUATION`), contact info, and operational readiness. |
+| `responder_missions` | Incident dispatch records, assigned responder IDs, mission instructions, and status lifecycle (`ASSIGNED`, `EN_ROUTE`, `ON_SCENE`, `ASSISTING`, `COMPLETED`). |
+| `responder_locations` | Real-time GPS telemetry history for responders and fleet vehicles (latitude, longitude, heading, speed, accuracy, timestamp). |
+| `resources` | Inventory levels for emergency relief assets (food rations, clean water, medical trauma kits, rescue boats, heavy equipment). |
+| `resource_dispatches` | Inter-agency logistics dispatches linking requested items to target incidents or relief facilities. |
+| `ai_recommendations` | Response plans generated by the 11-agent AI pipeline, approval state (`PENDING_APPROVAL`, `APPROVED`, `REJECTED`), and reviewer audit metadata. |
+| `incident_tracking_events`| Unified timeline of tracking updates, status transitions, and dynamic reroute decisions per incident. |
+| `weather_warnings` | Meteorological telemetry, hazard categories, and regional warning histories. |
+| `audit_logs` | Immutable audit trail capturing security events, registration, role actions, and critical decisions. |
+
+---
+
+## REST API Endpoints
+
+The backend mounts 16 domain routers from `src/routes/`:
+
+### 1. Health & Status
+- `GET /health`: Verifies backend service status, database connectivity, and server timestamp.
+
+### 2. Authentication & Onboarding (`/api/auth`)
+- `POST /api/auth/signup`: Citizen registration with password complexity validation and automatic JWT generation.
+- `POST /api/auth/login`: Role-based authentication supporting all 4 operational roles (`citizen`, `responder`, `authority_command`, `resource_manager`).
+- `GET /api/auth/me`: Validates session token and returns the current authenticated user profile.
+- `POST /api/auth/logout`: Clears authentication session.
+- `POST /api/auth/responder-apply`: Responder application submission for credential verification.
+
+### 3. Emergency & Citizen SOS (`/api/emergency`)
+- `POST /api/emergency/request`: Submits a citizen emergency SOS request with real GPS coordinates, accuracy, and required assistance.
+- `GET /api/emergency/requests`: Lists emergency requests for command dispatch.
+- `GET /api/emergency/requests/:id`: Retrieves status of a specific emergency request.
+- `GET /api/emergency/history`: Fetches past emergency submissions for the authenticated citizen.
+
+### 4. Incidents Management (`/api/incidents`)
+- `GET /api/incidents`: Retrieves active disaster incidents with severity and type filtering.
+- `GET /api/incidents/:id`: Fetches full incident profile including assigned assets and telemetry.
+- `POST /api/incidents`: Creates a verified operational incident.
+- `PATCH /api/incidents/:id`: Updates incident severity, status, or notes.
+
+### 5. Live Tracking & Mission Lifecycle (`/api/tracking`)
+- `POST /api/tracking/location`: Ingests real-time GPS telemetry from field responders, citizen devices, and vehicles.
+- `POST /api/tracking/status`: Records operational status transitions (`ASSIGNED` → `EN_ROUTE` → `ON_SCENE` → `ASSISTING` → `COMPLETED`).
+- `GET /api/tracking/:incidentId`: Fetches active tracking history and live coordinates for an incident.
+- `GET /api/tracking/request/:requestId`: Fetches live responder tracking associated with a citizen's emergency request.
+- `GET /api/tracking/location/:entityType/:entityId`: Returns the latest known coordinates of an entity.
+- `POST /api/tracking/reroute/:incidentId`: Triggers dynamic recalculation of the operational route when safety hazards change.
+
+### 6. Field Responders & Missions (`/api/responders`)
+- `GET /api/responders`: Retrieves responder roster and availability.
+- `GET /api/responders/mission`: Fetches the active mission assigned to the authenticated responder.
+- `GET /api/responders/history`: Retrieves completed mission history for a responder.
+- `PATCH /api/responders/mission/:id/status`: Updates responder mission execution status.
+
+### 7. Shelters Management (`/api/shelters`)
+- `GET /api/shelters`: Lists all emergency shelters with live capacity and occupancy metrics.
+- `PATCH /api/shelters/:id`: Updates shelter status, capacity limits, or current occupant count.
+
+### 8. Evacuation Routes (`/api/evacuation-routes`)
+- `GET /api/evacuation-routes`: Lists registered evacuation corridors.
+- `POST /api/evacuation-routes/calculate`: Computes optimal safe evacuation path between origin and destination.
+- `GET /api/evacuation-routes/active/:incidentId`: Returns active evacuation corridors designated for an incident.
+
+### 9. Emergency Alerts (`/api/alerts`)
+- `GET /api/alerts`: Lists active broadcast emergency alerts.
+- `POST /api/alerts`: Issues a new emergency alert.
+- `PATCH /api/alerts/:id/deactivate`: Deactivates an expired alert.
+
+### 10. Resource & Logistics Management (`/api/resources`)
+- `GET /api/resources/overview`: Summary metrics of supply inventories, ambulance availability, and active dispatches.
+- `GET /api/resources/supplies`: Critical supply levels (rations, water, medical kits).
+- `GET /api/resources/ambulances`: Status, location, and availability of emergency vehicles.
+- `GET /api/resources/equipment`: Heavy machinery, rescue gear, and boat inventories.
+- `GET /api/resources/dispatches`: Active and completed logistics dispatches.
+- `POST /api/resources/dispatches`: Initiates a resource dispatch order.
+
+### 11. Command Center Intelligence (`/api/command`)
+- `GET /api/command/overview`: Command Orbit summary metrics across all response domains.
+- `GET /api/command/regions`: Regional situation assessments and risk scores.
+- `GET /api/command/agents`: Status and health of the 11 AI agents.
+- `GET /api/command/recommendations`: Pending and approved AI response recommendations.
+- `POST /api/command/recommendations/:id/action`: Authority action (`APPROVE` / `REJECT` / `ALLOW` / `DENY`).
+- `POST /api/command/recommendations/:id/dismiss`: Dismisses a recommendation with optional note.
+
+### 12. Predictive Intelligence (`/api/command/predictive`)
+- `GET /api/command/predictive/overview`: Group A predictive intelligence metrics.
+- `POST /api/command/predictive/run`: Triggers full Group A predictive evaluation.
+- `POST /api/command/predictive/run/:agentId`: Executes a specific predictive agent.
+- `POST /api/command/predictive/recommendations/:id/action`: Records authority decision on predictive plans.
+
+### 13. Human Approval Gate (`/api/approvals`)
+- `GET /api/approvals/pending`: Retrieves plans awaiting human authority review.
+- `POST /api/approvals/:id/approve`: Approves a pending plan and executes operational directives.
+- `POST /api/approvals/:id/reject`: Rejects a pending plan with required justification.
+- `POST /api/approvals/:id/dismiss`: Dismisses an approval item.
+
+### 14. Real-Time Telemetry Stream (`/api/events`)
+- `GET /api/events`: Server-Sent Events (SSE) endpoint providing persistent real-time streaming for live incident tracking, responder positions, and broadcast alerts.
+
+### 15. External Environmental Telemetry (`/api/weather`, `/api/location`)
+- `GET /api/weather/current`: Returns environmental conditions and hazard forecasts.
+- `GET /api/weather/search`: Location search for weather queries.
+- `GET /api/location/reverse-geocode`: Translates GPS coordinates to human-readable street addresses.
+
+### 16. AI Orchestrator Pipeline (`/api/orchestrator`)
+- `POST /api/orchestrator/run`: Runs the complete 11-agent coordination pipeline for an incident.
+- `GET /api/orchestrator/status`: Reports active agent execution statuses.
+- `GET /api/orchestrator/executions`: Retrieves pipeline execution history and audit records.
+
+---
+
+## Authentication & Security
+
+- **JSON Web Tokens**: Stateless JWT tokens generated with `HS256` signature algorithm.
+- **Middleware**:
+  - `authenticateToken`: Validates `Authorization: Bearer <token>` header, decodes user payload, and rejects unauthorized requests (HTTP 401/403).
+  - `optionalAuth`: Extracts user identity when provided without blocking unauthenticated requests.
+- **Role Enforcement**: User roles are strictly validated against endpoint authorization requirements.
+
+---
+
+## Environment Configuration
+
+Configuration is loaded from environment files using `dotenv`. Create a `.env` file in the `backend/` directory based on the following variable names:
+
+```env
+PORT=8000
+NODE_ENV=development
+PGHOST=localhost
+PGPORT=5432
+PGUSER=postgres
+PGPASSWORD=your_database_password
+PGDATABASE=nexus_resq_db
+DATABASE_URL=postgresql://postgres:your_database_password@localhost:5432/nexus_resq_db
+CORS_ORIGIN=http://localhost:5173
+JWT_SECRET=your_jwt_secret_key_here
+```
+
+> **Security Note:** Never commit `.env` files or real production credentials. Ensure all secret values remain in untracked environment files.
+
+---
 
 ## Getting Started
 
 ### Prerequisites
-- Node.js >= 18
-- Convex account (free tier supported)
+- Node.js >= 18.0.0
+- npm >= 9.0.0
+- PostgreSQL >= 14 with a running instance
 
 ### Installation
 ```bash
 npm install
 ```
 
-### Start Backend in Development Mode
+### Database Setup & Migrations
+Initialize the PostgreSQL schema and apply all required migration scripts:
 ```bash
-npm run dev
-# or
-npx convex dev
+npm run db:setup
 ```
 
-### Seed Database with Initial Operational Data
+### Start Development Server
+Start the Express API server with automatic hot-reloading:
 ```bash
-npm run seed
-# or
-npx convex run seed:seedDatabase
+npm run dev
 ```
-Populates realistic incidents, rescue teams, shelters, hospitals, sensor readings, and supply inventories.
+The server will start at `http://localhost:8000` with the health check available at `http://localhost:8000/health`.
+
+### TypeScript Verification
+Verify type safety without emitting build output:
+```bash
+npm run typecheck
+```
