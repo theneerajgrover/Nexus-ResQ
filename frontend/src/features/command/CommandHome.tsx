@@ -8,7 +8,7 @@ import OperationalMap, { MapMarker } from '../../components/map/OperationalMap';
 // + Authority (regional intelligence, AI analysis, evacuation approval)
 
 type OrbitalMode = 'OBSERVE' | 'RESPOND' | 'EVACUATE' | 'RESOURCES' | 'INTELLIGENCE';
-type CommandTab = 'home' | 'sphere' | 'intelligence' | 'evacuation' | 'operations' | 'incidents' | 'dispatch';
+type CommandTab = 'home' | 'sphere' | 'intelligence' | 'evacuation' | 'incidents' | 'dispatch';
 type ApprovalState = 'PENDING_APPROVAL' | 'APPROVED' | 'REJECTED' | 'REPLANNING';
 
 const modeColors: Record<OrbitalMode, string> = {
@@ -149,6 +149,22 @@ export function ApprovalModal({
   const [note, setNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // Auto-close if plan is already approved or rejected (never open approval modal on decided plans)
+  useEffect(() => {
+    if (
+      activePlan?.approval_status === 'APPROVED' ||
+      activePlan?.status === 'APPROVED' ||
+      pendingApproval?.status === 'APPROVED' ||
+      pendingApproval?.decision === 'APPROVED' ||
+      activePlan?.approval_status === 'REJECTED' ||
+      activePlan?.status === 'REJECTED' ||
+      pendingApproval?.status === 'REJECTED' ||
+      pendingApproval?.decision === 'REJECTED'
+    ) {
+      onClose();
+    }
+  }, [activePlan, pendingApproval, onClose]);
 
   // Lock background scroll when modal is active
   useEffect(() => {
@@ -580,25 +596,14 @@ export function ApprovalModal({
                   <button
                     type="button"
                     disabled={submitting}
-                    onClick={async () => {
-                      setSubmitting(true);
-                      setErrorMsg(null);
-                      try {
-                        await commandApi.dismissRecommendation(
-                          planIdToApprove,
-                          note || 'Acknowledged and dismissed by Authority'
-                        );
-                        if (onDismissSuccess) onDismissSuccess();
-                        onClose();
-                      } catch (e: any) {
-                        setErrorMsg('Failed to dismiss request. Please retry.');
-                      } finally {
-                        setSubmitting(false);
-                      }
+                    onClick={() => {
+                      // Section 7: Dismiss/Close only closes the UI modal; plan remains pending in backend and visible in Pending Approvals
+                      if (onDismissSuccess) onDismissSuccess();
+                      onClose();
                     }}
                     className="font-mono text-xs text-white/40 hover:text-white/80 transition-colors underline cursor-pointer disabled:opacity-40 py-1"
                   >
-                    DISMISS / ACKNOWLEDGE WITHOUT APPROVAL
+                    DISMISS / CLOSE
                   </button>
 
                   <div className="flex items-center gap-3 w-full sm:w-auto">
@@ -618,6 +623,7 @@ export function ApprovalModal({
                           if (res && res.success !== false) {
                             setState('REJECTED');
                             if (onApprovedSuccess) onApprovedSuccess('REJECTED');
+                            onClose();
                           } else {
                             setErrorMsg(res?.error || 'Failed to reject plan. Please retry.');
                           }
@@ -656,6 +662,7 @@ export function ApprovalModal({
                           if (res && res.success !== false) {
                             setState('APPROVED');
                             if (onApprovedSuccess) onApprovedSuccess('APPROVED');
+                            onClose();
                           } else {
                             setErrorMsg(res?.error || 'Failed to authorize plan. Please retry.');
                           }
@@ -771,19 +778,25 @@ function AgentPipeline({
   const totalSteps = activePlan?.total_steps || prog.total || 11;
   const barFill = `${Math.min(100, Math.round((currentStep / totalSteps) * 100))}%`;
 
-  const isWaitingForApproval = (currentStep === 11 && activePlan?.status === 'WAITING_FOR_APPROVAL') || activePlan?.approval_status === 'PENDING';
+  const isWaitingForApproval =
+    ((currentStep === 11 && (activePlan?.status === 'WAITING_FOR_APPROVAL' || activePlan?.orchestration_status === 'WAITING_FOR_APPROVAL')) ||
+      activePlan?.approval_status === 'PENDING') &&
+    activePlan?.status !== 'APPROVED' &&
+    activePlan?.approval_status !== 'APPROVED' &&
+    activePlan?.status !== 'REJECTED' &&
+    activePlan?.approval_status !== 'REJECTED';
   const isExecuting = activePlan?.status === 'EXECUTING';
   const isMonitoring = activePlan?.status === 'MONITORING';
   const isIdle = activePlan?.status === 'NO_ACTIVE_INCIDENTS';
-  const isCompleted = currentStep === 11 && (activePlan?.status === 'APPROVED' || activePlan?.status === 'COMPLETE');
+  const isCompleted = currentStep === 11 && (activePlan?.status === 'APPROVED' || activePlan?.status === 'COMPLETE' || activePlan?.approval_status === 'APPROVED');
   const isProcessing = activePlan?.status === 'PROCESSING' || (currentStep > 0 && currentStep < 11);
 
-  let buttonText = 'REVIEW & APPROVE PLAN';
-  let buttonDisabled = false;
+  let buttonText = 'NO PENDING APPROVALS';
+  let buttonDisabled = true;
   let buttonStyle = {
-    background: 'rgba(245,158,11,0.15)',
-    color: '#f59e0b',
-    border: '1px solid rgba(245,158,11,0.35)',
+    background: 'rgba(255,255,255,0.05)',
+    color: 'rgba(255,255,255,0.4)',
+    border: '1px solid rgba(255,255,255,0.1)',
   };
 
   if (isWaitingForApproval) {
@@ -812,7 +825,7 @@ function AgentPipeline({
     };
   } else if (isCompleted) {
     buttonText = '✓ PLAN COMPLETED & DISPATCHED';
-    buttonDisabled = false;
+    buttonDisabled = true;
     buttonStyle = {
       background: 'rgba(16,185,129,0.12)',
       color: '#10b981',
@@ -2901,11 +2914,14 @@ export default function CommandHome() {
 
   // Handler to open the unified Human Approval Modal
   const handleOpenApprovalModal = useCallback(() => {
-    setShowApproval(true);
-  }, []);
+    if (activeApproval && (activeApproval.status === 'PENDING' || !activeApproval.status)) {
+      setShowApproval(true);
+    }
+  }, [activeApproval]);
 
   // Handler when Human Approval decision is successfully finalized in the backend
   const handleApprovalFinalized = useCallback((decision: 'APPROVED' | 'REJECTED') => {
+    setShowApproval(false);
     setShowCompletionBanner(false);
     setActiveApproval(null);
     setActivePendingApproval(null);
@@ -2919,9 +2935,8 @@ export default function CommandHome() {
 
   // Handler when Human Approval is explicitly dismissed without approval
   const handleApprovalDismissed = useCallback(() => {
+    setShowApproval(false);
     setShowCompletionBanner(false);
-    setActiveApproval(null);
-    setActivePendingApproval(null);
     fetchPredictiveData();
   }, [fetchPredictiveData]);
 
@@ -2930,14 +2945,20 @@ export default function CommandHome() {
     location.pathname === '/command/orbit' ? 'sphere' :
     location.pathname.startsWith('/command/intelligence') ? 'intelligence' :
     location.pathname.startsWith('/command/evacuation') ? 'evacuation' :
-    location.pathname.startsWith('/command/operations') ? 'operations' :
     location.pathname.startsWith('/command/incidents') ? 'incidents' :
     location.pathname.startsWith('/command/dispatch') ? 'dispatch' : 'home';
 
   const activeCount = liveIncidents.filter((i: any) => i.status === 'ACTIVE' || i.status === 'PENDING').length;
   const pendingDispatch = liveIncidents.filter((i: any) => i.pending).length;
 
-  const onApprove = useCallback(() => setShowApproval(true), []);
+  const onApprove = useCallback(() => {
+    if (
+      (activeApproval && activeApproval.status === 'PENDING') ||
+      (activePlan?.status === 'WAITING_FOR_APPROVAL' && activePlan?.approval_status !== 'APPROVED' && activePlan?.approval_status !== 'REJECTED')
+    ) {
+      setShowApproval(true);
+    }
+  }, [activeApproval, activePlan]);
 
   return (
     <div className="w-full h-full flex flex-col overflow-hidden">
@@ -3233,7 +3254,6 @@ export default function CommandHome() {
                   />
                 )}
                 {tab === 'evacuation' && <EvacuationTab />}
-                {tab === 'operations' && <OperationsTab />}
                 {tab === 'incidents' && <IncidentsTab onApprove={onApprove} />}
                 {tab === 'dispatch' && <DispatchTab />}
               </div>
@@ -3269,7 +3289,7 @@ export default function CommandHome() {
 
       {/* 11/11 AI Orchestration Completion Notification Banner */}
       <AnimatePresence>
-        {showCompletionBanner && activeApproval && !showApproval && (
+        {showCompletionBanner && activeApproval && activeApproval.status === 'PENDING' && !showApproval && (
           <BottomCompletionBanner
             planId={activeApproval?.plan_id || activeApproval?.approval_id}
             onOpenApproval={handleOpenApprovalModal}

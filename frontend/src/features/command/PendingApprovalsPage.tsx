@@ -122,9 +122,7 @@ export default function PendingApprovalsPage() {
   };
 
   const handleDismissFinalized = () => {
-    if (selectedPlan) {
-      setPlans((prev) => prev.filter((p) => p.plan_id !== selectedPlan.plan_id && p.approval_id !== selectedPlan.approval_id));
-    }
+    // Dismiss only closes the UI modal without altering plan status; plan remains pending
     setSelectedPlan(null);
     fetchPendingPlans();
   };

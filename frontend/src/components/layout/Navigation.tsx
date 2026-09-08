@@ -31,7 +31,6 @@ const navConfig: Record<NonNullable<Role>, { label: string; path: string }[]> = 
     { label: 'WARNINGS', path: '/command/warnings' },
     { label: 'WEATHER', path: '/command/weather' },
     { label: 'EVACUATION', path: '/command/evacuation' },
-    { label: 'OPERATIONS', path: '/command/operations' },
     { label: 'INCIDENTS', path: '/command/incidents' },
     { label: 'DISPATCH', path: '/command/dispatch' },
   ],
@@ -116,7 +115,7 @@ export default function Navigation() {
       className="fixed top-0 left-0 right-0 z-50 glass-strong"
       style={{ borderBottom: `1px solid ${color}22` }}
     >
-      <div className="flex items-center h-12 px-6 gap-6">
+      <div className="flex items-center h-12 px-4 lg:px-6 gap-3 lg:gap-4">
         {/* Logo */}
         <Link to="/" className="flex items-center gap-3 shrink-0">
           <div style={{ filter: `drop-shadow(0 0 8px ${color}88)` }} className="transition-all duration-500">
@@ -141,25 +140,25 @@ export default function Navigation() {
         </div>
 
         {/* Nav items */}
-        <div className="flex items-center gap-0.5 flex-1">
+        <div className="flex items-center gap-1 flex-1 min-w-0">
           {items.map((item) => {
             const active = location.pathname === item.path;
             return (
               <Link
                 key={item.path}
                 to={item.path}
-                className="relative px-3 py-1.5 font-condensed font-semibold text-xs tracking-widest transition-colors duration-200"
-                style={{ color: active ? color : 'rgba(232,237,242,0.4)' }}
+                className="relative inline-flex items-center justify-center h-8 px-2.5 lg:px-3 font-condensed font-semibold text-xs tracking-wider lg:tracking-widest transition-colors duration-200 text-center whitespace-nowrap shrink-0"
+                style={{ color: active ? color : 'rgba(232,237,242,0.45)' }}
               >
                 {active && (
                   <motion.span
                     layoutId="nav-active"
-                    className="absolute inset-0 rounded"
-                    style={{ background: `${color}12` }}
+                    className="absolute inset-0 rounded-lg"
+                    style={{ background: `${color}16`, border: `1px solid ${color}33` }}
                     transition={{ type: 'spring', stiffness: 400, damping: 30 }}
                   />
                 )}
-                <span className="relative z-10">{item.label}</span>
+                <span className="relative z-10 leading-none">{item.label}</span>
               </Link>
             );
           })}
