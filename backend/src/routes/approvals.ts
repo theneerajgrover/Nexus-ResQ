@@ -26,6 +26,7 @@ approvalsRouter.get('/pending', async (req: Request, res: Response): Promise<voi
         a.status,
         a.created_at,
         a.expires_at,
+        ROUND(EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - a.created_at))) as pending_duration_seconds,
         r.action,
         r.reason,
         r.priority,
@@ -37,15 +38,26 @@ approvalsRouter.get('/pending', async (req: Request, res: Response): Promise<voi
         r.confidence_score,
         r.risk_flags,
         r.proposed_actions_list,
+        r.critic_verification,
+        r.plan_version,
+        r.cycle_number,
         i.title as incident_title,
         i.type as incident_type,
         i.severity as incident_severity,
         i.location as incident_location,
         i.latitude as incident_latitude,
-        i.longitude as incident_longitude
+        i.longitude as incident_longitude,
+        i.status as incident_status,
+        p.id as exec_id,
+        p.current_step as completed_agents,
+        p.total_steps as total_agents,
+        p.current_stage,
+        p.status as orchestration_status,
+        p.critic_validation
       FROM approvals a
       LEFT JOIN ai_recommendations r ON a.plan_id = r.id
       LEFT JOIN incidents i ON a.incident_id = i.id
+      LEFT JOIN orchestration_plans p ON (p.plan_id = a.plan_id OR p.approval_id = a.approval_id)
       WHERE a.status = 'PENDING'
       ORDER BY a.created_at DESC
     `);
@@ -272,29 +284,7 @@ approvalsRouter.post('/:id/dismiss', authenticateToken, async (req: Request, res
 
     const reviewerName = user.name || 'Command Officer';
 
-    await query(`
-      UPDATE approvals
-      SET status = 'DISMISSED',
-          decision = 'DISMISSED',
-          reviewed_by = $1,
-          reviewed_at = CURRENT_TIMESTAMP,
-          reason = $2,
-          updated_at = CURRENT_TIMESTAMP
-      WHERE approval_id = $3 OR plan_id = $3
-    `, [reviewerName, reason || 'Acknowledged and dismissed by authority', id]);
-
-    await query(`
-      UPDATE notifications
-      SET status = 'READ'
-      WHERE (approval_id = $1 OR plan_id = $1)
-    `, [id]);
-
-    broadcastEvent('APPROVAL_RESOLVED', {
-      approvalId: id,
-      decision: 'DISMISSED',
-      reviewer: reviewerName,
-      timestamp: Date.now(),
-    });
+    const result = await agentOrchestrator.handleApprovalDecision(String(id), 'DISMISSED', reviewerName, reason);
 
     res.json({
       success: true,
@@ -304,6 +294,7 @@ approvalsRouter.post('/:id/dismiss', authenticateToken, async (req: Request, res
         decision: 'DISMISSED',
         reviewedBy: reviewerName,
         reviewedAt: new Date().toISOString(),
+        details: result,
       },
     });
   } catch (err: any) {

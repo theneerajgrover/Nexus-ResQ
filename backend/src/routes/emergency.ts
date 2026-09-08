@@ -192,6 +192,12 @@ emergencyRouter.post('/request', optionalAuth, async (req: Request, res: Respons
       ]
     ).catch(() => {});
 
+    // 11. Auto-trigger 11-agent AI orchestration pipeline for the new incident (fire-and-forget)
+    import('../services/agentOrchestrator').then(({ agentOrchestrator }) => {
+      agentOrchestrator.runCycle(incId, true).catch((err: any) => {
+        console.error(`[Emergency] Auto-orchestration trigger failed for ${incId}:`, err.message);
+      });
+    }).catch(() => {});
 
     res.status(201).json({
       success: true,

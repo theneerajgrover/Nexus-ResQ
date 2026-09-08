@@ -236,36 +236,19 @@ commandRouter.post('/recommendations/:id/dismiss', async (req: Request, res: Res
       }
     }
 
-    // Update approvals table to DISMISSED (maintaining DISMISSED != APPROVED)
-    await query(`
-      UPDATE approvals
-      SET status = 'DISMISSED',
-          decision = 'DISMISSED',
-          reviewed_by = $1,
-          reviewed_at = CURRENT_TIMESTAMP,
-          reason = $2,
-          updated_at = CURRENT_TIMESTAMP
-      WHERE approval_id = $3 OR plan_id = $3
-    `, [reviewer, note || 'Acknowledged and dismissed by Authority', id]);
-
-    // Mark notifications as READ
-    await query(`
-      UPDATE notifications
-      SET status = 'READ'
-      WHERE (approval_id = $1 OR plan_id = $1)
-    `, [id]);
-
-    broadcastEvent('APPROVAL_RESOLVED', {
-      planId: id,
-      decision: 'DISMISSED',
-      resolvedBy: reviewer,
-      timestamp: new Date().toISOString(),
-    });
+    const orchResult = await agentOrchestrator.handleApprovalDecision(String(id), 'DISMISSED', reviewer, note);
 
     res.json({
       success: true,
       decision: 'DISMISSED',
       message: `Approval request for ${id} dismissed.`,
+      data: {
+        planId: id,
+        decision: 'DISMISSED',
+        reviewedBy: reviewer,
+        reviewedAt: new Date().toISOString(),
+        details: orchResult,
+      },
     });
   } catch (err: any) {
     console.error('[Command Error] /recommendations/:id/dismiss:', err.message);
