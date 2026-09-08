@@ -121,6 +121,14 @@ export async function runMigration() {
     const { runOrchestrationApprovalMigration } = await import('./migrate_orchestration_approval');
     await runOrchestrationApprovalMigration();
 
+    // Step 7: Run Continuous Orchestration engine schema enhancements
+    const { runContinuousOrchestrationMigration } = await import('./migrate_continuous_orchestration');
+    await runContinuousOrchestrationMigration();
+
+    // Step 8: Run Live Tracking & Routing schema enhancements
+    const { runLiveTrackingRoutingMigration } = await import('./migrate_live_tracking_routing');
+    await runLiveTrackingRoutingMigration();
+
     // List all tables created
     const tablesRes = await dbClient.query(`
       SELECT table_name 

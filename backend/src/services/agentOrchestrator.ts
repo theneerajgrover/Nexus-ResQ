@@ -2,7 +2,7 @@
 // NEXUS RESQ — CONTINUOUS AI ORCHESTRATION & RESPONSE ENGINE
 // Closed-Loop 11-Agent Intelligence, Human Approval & State Mutation
 // ============================================================
-import { query } from '../db';
+import { query, getClient } from '../db';
 import { broadcastEvent } from '../routes/realtime';
 
 export interface OrchestrationResult {
@@ -45,10 +45,14 @@ export class AgentOrchestratorService {
       }
 
       if (!incident) {
-        // Prioritize pending incidents first, then critical/high active incidents
+        // Prioritize pending incidents first, then critical/high active incidents that do not already have an active/pending plan or responder
         const res = await query(`
           SELECT * FROM incidents 
-          WHERE status IN ('ACTIVE', 'PENDING', 'RESPONDING') AND status != 'RESOLVED'
+          WHERE (pending = TRUE OR status = 'PENDING' OR (status = 'ACTIVE' AND assigned_responder_id IS NULL))
+            AND status NOT IN ('RESPONDING', 'RESOLVED', 'CANCELLED')
+            AND id NOT IN (
+              SELECT DISTINCT incident_id FROM approvals WHERE status = 'PENDING' AND incident_id IS NOT NULL
+            )
           ORDER BY pending DESC, 
                    (CASE severity WHEN 'CRITICAL' THEN 1 WHEN 'HIGH' THEN 2 WHEN 'MODERATE' THEN 3 ELSE 4 END) ASC, 
                    created_at DESC 
@@ -108,6 +112,25 @@ export class AgentOrchestratorService {
         SET status = 'WAITING', progress = 0, last_event = 'Queued for Cycle #' || $1, updated_at = CURRENT_TIMESTAMP
       `, [this.activeCycleNumber]);
 
+      // Supersede older pending plans/approvals for this specific incident
+      await query(`
+        UPDATE approvals
+        SET status = 'SUPERSEDED', updated_at = CURRENT_TIMESTAMP
+        WHERE incident_id = $1 AND status = 'PENDING'
+      `, [incident.id]).catch(() => {});
+
+      await query(`
+        UPDATE orchestration_plans
+        SET status = 'SUPERSEDED', updated_at = CURRENT_TIMESTAMP
+        WHERE incident_id = $1 AND status = 'WAITING_FOR_APPROVAL'
+      `, [incident.id]).catch(() => {});
+
+      await query(`
+        UPDATE ai_recommendations
+        SET status = 'SUPERSEDED', updated_at = CURRENT_TIMESTAMP
+        WHERE incident_id = $1 AND status = 'PENDING_APPROVAL'
+      `, [incident.id]).catch(() => {});
+
       // Create new orchestration_plans record at 0/11
       await query(`
         INSERT INTO orchestration_plans (
@@ -130,6 +153,30 @@ export class AgentOrchestratorService {
         current_stage: 'CONTINUOUS INGESTION',
         timestamp: Date.now(),
       });
+
+      // Update emergency_requests status to ACCEPTED when pipeline starts
+      if (incident.request_id) {
+        await query(`
+          UPDATE emergency_requests SET status = 'ACCEPTED', updated_at = CURRENT_TIMESTAMP WHERE id = $1 AND status = 'REQUESTED'
+        `, [incident.request_id]).catch(() => {});
+
+        await query(`
+          INSERT INTO incident_status_history (id, request_id, incident_id, previous_status, new_status, actor, notes, created_at)
+          VALUES ($1, $2, $3, 'REQUESTED', 'ACCEPTED', 'AI_ORCHESTRATOR', 'AI pipeline initiated — 11-agent analysis started.', CURRENT_TIMESTAMP)
+        `, [`HIST-${Date.now()}`, incident.request_id, incident.id]).catch(() => {});
+
+        broadcastEvent('INCIDENT_STATUS_CHANGED', {
+          incidentId: incident.id,
+          requestId: incident.request_id,
+          previousStatus: 'REQUESTED',
+          newStatus: 'ACCEPTED',
+          stepIndex: 1,
+          label: 'Incident Accepted',
+          description: 'AI orchestration pipeline initiated. 11-agent analysis in progress.',
+          actor: 'AI_ORCHESTRATOR',
+          timestamp: Date.now(),
+        });
+      }
 
       // Context accumulator across the 11 agents
       const context: Record<string, any> = {
@@ -680,7 +727,7 @@ export class AgentOrchestratorService {
   /**
    * Handle Human Authority Decision (APPROVED, REJECTED, DISMISSED)
    * On approval, mutates real PostgreSQL database records (responders, ambulances, equipment, shelters, incidents),
-   * enters monitoring, and triggers the next continuous response cycle (0/11 -> 11/11)!
+   * enters monitoring.
    */
   async handleApprovalDecision(
     planId: string,
@@ -690,318 +737,390 @@ export class AgentOrchestratorService {
   ): Promise<any> {
     console.log(`[Orchestrator] Human Decision received for ${planId}: ${decision} by ${reviewer}`);
 
-    // 1. Fetch recommendation/plan details
-    let recRes = await query(`SELECT * FROM ai_recommendations WHERE id = $1`, [planId]);
-    let rec = recRes.rows[0];
-    if (!rec) {
-      recRes = await query(`SELECT * FROM ai_recommendations ORDER BY created_at DESC LIMIT 1`);
-      rec = recRes.rows[0];
-    }
-    const incidentId = rec?.incident_id || 'INC-2849';
-
-    // 2. Update approvals table
-    const appUpdate = await query(`
-      UPDATE approvals
-      SET status = $1, decision = $1, reviewed_by = $2, reviewed_at = CURRENT_TIMESTAMP, reason = $3, updated_at = CURRENT_TIMESTAMP
-      WHERE plan_id = $4 OR approval_id = $4
-      RETURNING *
-    `, [decision, reviewer, comments || `Human decision: ${decision}`, planId]);
-
-    // 3. Update ai_recommendations table
-    await query(`
-      UPDATE ai_recommendations
-      SET status = $1, approved_by = $2, approved_at = CURRENT_TIMESTAMP,
-          execution_status = $3, rejection_reason = $4, updated_at = CURRENT_TIMESTAMP
-      WHERE id = $5
-    `, [
-      decision,
-      reviewer,
-      decision === 'APPROVED' ? 'DISPATCHED' : decision === 'REJECTED' ? 'CANCELLED' : 'DISMISSED',
-      decision === 'REJECTED' ? (comments || 'Rejected by Command Authority') : null,
-      rec?.id || planId,
+    // 1. Resolve canonical plan, approval, and incident records across tables
+    const [appRes, planRes, recLookupRes] = await Promise.all([
+      query(`SELECT * FROM approvals WHERE approval_id = $1 OR plan_id = $1 ORDER BY created_at DESC LIMIT 1`, [planId]),
+      query(`SELECT * FROM orchestration_plans WHERE plan_id = $1 OR id = $1 OR approval_id = $1 ORDER BY created_at DESC LIMIT 1`, [planId]),
+      query(`SELECT * FROM ai_recommendations WHERE id = $1 ORDER BY created_at DESC LIMIT 1`, [planId]),
     ]);
 
-    // 4. Update orchestration_plans table
-    await query(`
-      UPDATE orchestration_plans
-      SET status = $1, approved_by = $2, approved_at = CURRENT_TIMESTAMP,
-          rejection_reason = $3, updated_at = CURRENT_TIMESTAMP
-      WHERE plan_id = $4 OR id = $4
-    `, [decision, reviewer, decision === 'REJECTED' ? comments : null, planId]);
+    const appRow = appRes.rows[0];
+    const planRow = planRes.rows[0];
+    const recRow = recLookupRes.rows[0];
 
-    // 5. Mark notifications READ
-    await query(`
-      UPDATE notifications
-      SET status = 'READ'
-      WHERE plan_id = $1 OR approval_id = $1
-    `, [planId]).catch(() => {});
+    const canonicalPlanId = appRow?.plan_id || planRow?.plan_id || recRow?.id || planId;
+    const canonicalApprovalId = appRow?.approval_id || planRow?.approval_id;
+    const canonicalExecId = planRow?.id;
+    const incidentId = appRow?.incident_id || planRow?.incident_id || recRow?.incident_id || 'INC-2849';
+    const currentApprovalStatus = appRow?.status;
+    const currentPlanStatus = planRow?.status;
 
-    // 6. Broadcast decision resolution
+    // 2. IDEMPOTENCY & STALE DATA PROTECTION
+    if (currentApprovalStatus === 'APPROVED' || currentPlanStatus === 'APPROVED' || currentPlanStatus === 'EXECUTING' || currentPlanStatus === 'COMPLETE') {
+      if (decision === 'APPROVED') {
+        console.log(`[Orchestrator] Idempotent hit: Plan ${canonicalPlanId} is already APPROVED. Returning existing state.`);
+        return {
+          success: true,
+          decision: 'APPROVED',
+          planId: canonicalPlanId,
+          approvalId: canonicalApprovalId,
+          status: 'APPROVED',
+          alreadyDecided: true,
+          message: `Response plan ${canonicalPlanId} has already been approved and executed.`,
+        };
+      }
+      throw new Error(`Plan ${canonicalPlanId} has already been APPROVED and executed; cannot change to ${decision}.`);
+    }
+
+    if (currentApprovalStatus === 'REJECTED' || currentPlanStatus === 'REJECTED') {
+      if (decision === 'REJECTED') {
+        return {
+          success: true,
+          decision: 'REJECTED',
+          planId: canonicalPlanId,
+          approvalId: canonicalApprovalId,
+          status: 'REJECTED',
+          alreadyDecided: true,
+          message: `Response plan ${canonicalPlanId} has already been rejected.`,
+        };
+      }
+      throw new Error(`Plan ${canonicalPlanId} has already been REJECTED; cannot approve a rejected plan.`);
+    }
+
+    if (currentApprovalStatus === 'DISMISSED') {
+      return {
+        success: true,
+        decision: 'DISMISSED',
+        planId: canonicalPlanId,
+        approvalId: canonicalApprovalId,
+        status: 'DISMISSED',
+        alreadyDecided: true,
+        message: `Response plan ${canonicalPlanId} has already been dismissed.`,
+      };
+    }
+
+    // 3. Fetch recommendation details
+    let recRes = await query(`SELECT * FROM ai_recommendations WHERE id = $1`, [canonicalPlanId]);
+    let rec = recRes.rows[0];
+    if (!rec) {
+      recRes = await query(`SELECT * FROM ai_recommendations WHERE incident_id = $1 ORDER BY created_at DESC LIMIT 1`, [incidentId]);
+      rec = recRes.rows[0];
+    }
+
+    // Fetch incident details
+    const incDetailsRes = await query(`SELECT * FROM incidents WHERE id = $1`, [incidentId]);
+    const incRow = incDetailsRes.rows[0] || {};
+
+    let assignedUnitName = 'Alpha-14 SAR Unit';
+    let assignedRespId = 'R-14';
+    let dispatchId = `DSP-${Date.now().toString().slice(-4)}`;
+
+    // 4. TRANSACTION-SAFE DATABASE MUTATIONS
+    const client = await getClient();
+    try {
+      await client.query('BEGIN');
+
+      // A. Update approvals table
+      await client.query(`
+        UPDATE approvals
+        SET status = $1, decision = $1, reviewed_by = $2, reviewed_at = CURRENT_TIMESTAMP,
+            reason = $3, updated_at = CURRENT_TIMESTAMP
+        WHERE plan_id = $4 OR approval_id = $4 OR ($5::text IS NOT NULL AND approval_id = $5)
+      `, [decision, reviewer, comments || `Human decision: ${decision}`, canonicalPlanId, canonicalApprovalId || null]);
+
+      // Supersede any other pending approvals for this incident
+      await client.query(`
+        UPDATE approvals
+        SET status = 'SUPERSEDED', updated_at = CURRENT_TIMESTAMP
+        WHERE incident_id = $1 AND plan_id != $2 AND status = 'PENDING'
+      `, [incidentId, canonicalPlanId]);
+
+      // B. Update ai_recommendations table
+      await client.query(`
+        UPDATE ai_recommendations
+        SET status = $1, approved_by = $2, approved_at = CURRENT_TIMESTAMP,
+            execution_status = $3, rejection_reason = $4, updated_at = CURRENT_TIMESTAMP
+        WHERE id = $5 OR incident_id = $6
+      `, [
+        decision,
+        reviewer,
+        decision === 'APPROVED' ? 'DISPATCHED' : decision === 'REJECTED' ? 'CANCELLED' : 'DISMISSED',
+        decision === 'REJECTED' ? (comments || 'Rejected by Command Authority') : null,
+        canonicalPlanId,
+        incidentId,
+      ]);
+
+      // C. Update orchestration_plans table
+      await client.query(`
+        UPDATE orchestration_plans
+        SET status = $1, approved_by = $2, approved_at = CURRENT_TIMESTAMP,
+            rejection_reason = $3, updated_at = CURRENT_TIMESTAMP
+        WHERE plan_id = $4 OR id = $4 OR ($5::text IS NOT NULL AND id = $5)
+      `, [
+        decision === 'APPROVED' ? 'EXECUTING' : decision,
+        reviewer,
+        decision === 'REJECTED' ? comments : null,
+        canonicalPlanId,
+        canonicalExecId || null,
+      ]);
+
+      // D. Mark notifications as READ
+      await client.query(`
+        UPDATE notifications
+        SET status = 'READ'
+        WHERE plan_id = $1 OR approval_id = $2 OR incident_id = $3
+      `, [canonicalPlanId, canonicalApprovalId || canonicalPlanId, incidentId]);
+
+      if (decision === 'APPROVED') {
+        // E. Find available responder or use existing assignment
+        const existingResp = await client.query(`
+          SELECT id, name FROM responders WHERE current_incident_id = $1 LIMIT 1
+        `, [incidentId]);
+
+        if (existingResp.rowCount && existingResp.rowCount > 0) {
+          assignedUnitName = existingResp.rows[0].name;
+          assignedRespId = existingResp.rows[0].id;
+        } else {
+          const availResp = await client.query(`
+            SELECT id, name, latitude, longitude FROM responders 
+            WHERE status = 'AVAILABLE' 
+            ORDER BY id ASC LIMIT 1
+          `);
+          if (availResp.rowCount && availResp.rowCount > 0) {
+            const resp = availResp.rows[0];
+            assignedUnitName = resp.name;
+            assignedRespId = resp.id;
+            await client.query(`
+              UPDATE responders 
+              SET status = 'ASSIGNED', current_incident_id = $1, updated_at = CURRENT_TIMESTAMP
+              WHERE id = $2
+            `, [incidentId, resp.id]);
+            console.log(`[DB Mutation] Responder ${resp.name} (${resp.id}) set to ASSIGNED for ${incidentId}`);
+          }
+        }
+
+        // F. Create / Update missions record
+        const missionId = `MSN-${incidentId.replace(/[^0-9]/g, '') || Date.now().toString().slice(-4)}`;
+        await client.query(`
+          INSERT INTO missions (
+            id, incident_id, responder_id, title, location, latitude, longitude, status, priority, casualties_reported, hazards, perimeter, notes, updated_at
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7, 'ASSIGNED', $8, 0, $9, '250m', $10, CURRENT_TIMESTAMP)
+          ON CONFLICT (id) DO UPDATE
+          SET responder_id = EXCLUDED.responder_id, status = 'ASSIGNED', updated_at = CURRENT_TIMESTAMP
+        `, [
+          missionId,
+          incidentId,
+          assignedRespId,
+          `Operational Mission for ${incidentId}`,
+          incRow.location || 'Incident Area',
+          incRow.latitude || 52.0,
+          incRow.longitude || 48.0,
+          incRow.severity || 'HIGH',
+          [incRow.type || 'GENERAL'],
+          `Unit ${assignedUnitName} dispatched via human authorization.`
+        ]);
+
+        // G. Update emergency_requests and incidents tables
+        await client.query(`
+          UPDATE emergency_requests 
+          SET assigned_responder_id = $1, status = 'ASSIGNED', updated_at = CURRENT_TIMESTAMP 
+          WHERE incident_id = $2
+        `, [assignedRespId, incidentId]);
+
+        await client.query(`
+          UPDATE incidents 
+          SET assigned_responder_id = $1, status = 'RESPONDING', responders_count = responders_count + 1, pending = FALSE, updated_at = CURRENT_TIMESTAMP 
+          WHERE id = $2
+        `, [assignedRespId, incidentId]);
+
+        // H. Record transition in incident_status_history
+        await client.query(`
+          INSERT INTO incident_status_history (id, request_id, incident_id, previous_status, new_status, actor, responder_id, notes, created_at)
+          VALUES ($1, $2, $3, 'ACCEPTED', 'ASSIGNED', $4, $5, $6, CURRENT_TIMESTAMP)
+        `, [
+          `HIST-${Date.now()}`,
+          incRow.request_id || null,
+          incidentId,
+          reviewer,
+          assignedRespId,
+          `Authority approved dispatch plan. Assigned unit ${assignedUnitName}.`
+        ]);
+
+        // I. Dispatch available ambulance
+        const availAmb = await client.query(`
+          SELECT id, callsign FROM ambulances 
+          WHERE status = 'AVAILABLE' 
+          ORDER BY id ASC LIMIT 1
+        `);
+        if (availAmb.rowCount && availAmb.rowCount > 0) {
+          const amb = availAmb.rows[0];
+          await client.query(`
+            UPDATE ambulances 
+            SET status = 'DISPATCHED', last_update = 'Dispatched to ' || $1, updated_at = CURRENT_TIMESTAMP
+            WHERE id = $2
+          `, [rec?.affected_zone || incidentId, amb.id]);
+        }
+
+        // J. Allocate equipment in database
+        const availEqp = await client.query(`
+          SELECT id, name, available FROM equipment 
+          WHERE available > 0 
+          ORDER BY available DESC LIMIT 1
+        `);
+        if (availEqp.rowCount && availEqp.rowCount > 0) {
+          const eqp = availEqp.rows[0];
+          const newAvail = Math.max(0, eqp.available - 1);
+          await client.query(`
+            UPDATE equipment 
+            SET available = $1, 
+                status = CASE WHEN $1 <= 0 THEN 'DEPLETED' ELSE 'PARTIAL' END,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = $2
+          `, [newAvail, eqp.id]);
+        }
+
+        // K. Increase shelter occupancy
+        const openShelter = await client.query(`
+          SELECT id, name, capacity, occupancy FROM shelters 
+          WHERE status IN ('OPEN', 'ACTIVATING') 
+          ORDER BY (capacity - occupancy) DESC LIMIT 1
+        `);
+        if (openShelter.rowCount && openShelter.rowCount > 0) {
+          const shl = openShelter.rows[0];
+          const evacueesIntake = rec?.priority === 'CRITICAL' ? 35 : 20;
+          const newOcc = Math.min(shl.capacity, shl.occupancy + evacueesIntake);
+          await client.query(`
+            UPDATE shelters 
+            SET occupancy = $1,
+                status = CASE WHEN $1 >= capacity THEN 'NEAR FULL' ELSE 'OPEN' END,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = $2
+          `, [newOcc, shl.id]);
+        }
+
+        // L. Insert dispatch_records
+        await client.query(`
+          INSERT INTO dispatch_records (
+            id, resource_type, qty_approved, qty_dispatched, destination, incident_id, unit, status, approved_by
+          )
+          VALUES ($1, $2, 2, 2, $3, $4, $5, 'DISPATCHED', $6)
+        `, [
+          dispatchId,
+          rec?.recommended_resource || 'HEAVY RESCUE UNIT',
+          rec?.affected_zone || 'Disaster Sector',
+          incidentId,
+          assignedUnitName,
+          reviewer,
+        ]);
+
+        // M. Audit log
+        await client.query(`
+          INSERT INTO audit_logs (id, actor, action, entity, metadata)
+          VALUES ($1, $2, 'DISPATCH_APPROVED_EXECUTED', 'orchestration_plans', $3)
+        `, [
+          `AUD-${Date.now().toString().slice(-6)}`,
+          reviewer,
+          JSON.stringify({ planId: canonicalPlanId, incidentId, assignedUnitName, dispatchId }),
+        ]);
+      } else if (decision === 'REJECTED') {
+        await client.query(`
+          INSERT INTO audit_logs (id, actor, action, entity, metadata)
+          VALUES ($1, $2, 'PLAN_REJECTED', 'orchestration_plans', $3)
+        `, [
+          `AUD-${Date.now().toString().slice(-6)}`,
+          reviewer,
+          JSON.stringify({ planId: canonicalPlanId, incidentId, reason: comments || 'Rejected by Command Authority' }),
+        ]);
+      } else if (decision === 'DISMISSED') {
+        await client.query(`
+          INSERT INTO audit_logs (id, actor, action, entity, metadata)
+          VALUES ($1, $2, 'PLAN_DISMISSED', 'orchestration_plans', $3)
+        `, [
+          `AUD-${Date.now().toString().slice(-6)}`,
+          reviewer,
+          JSON.stringify({ planId: canonicalPlanId, incidentId, note: comments || 'Dismissed without approval' }),
+        ]);
+      }
+
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      console.error('[Orchestrator Error] Failed during handleApprovalDecision transaction:', err);
+      throw err;
+    } finally {
+      client.release();
+    }
+
+    // 5. BROADCAST EVENTS ACROSS REALTIME SSE
     broadcastEvent('APPROVAL_RESOLVED', {
-      planId,
+      planId: canonicalPlanId,
+      approvalId: canonicalApprovalId,
+      incidentId,
       decision,
       reviewer,
       comments,
       timestamp: Date.now(),
     });
 
-    // ── IF REJECTED OR DISMISSED: Handle Reassessment ────────────────
-    if (decision !== 'APPROVED') {
-      console.log(`[Orchestrator] Plan ${planId} was ${decision}. Preparing reassessment cycle...`);
-      if (this.continuousLoopActive) {
-        setTimeout(() => {
-          this.runCycle(undefined, true).catch((e) => {
-            console.error('[Orchestrator] Error during reassessment cycle:', e);
-          });
-        }, 3500);
-      }
-      return { success: true, decision, planId, status: decision };
-    }
-
-    // ── IF APPROVED: EXECUTE REAL DATABASE MUTATIONS ─────────────────
-    console.log(`[Orchestrator] Plan ${planId} APPROVED. Mutating operational database records...`);
-
-    // A. Update orchestration_plans to EXECUTING
-    await query(`
-      UPDATE orchestration_plans
-      SET status = 'EXECUTING', current_stage = 'DISPATCHING RESOURCES', updated_at = CURRENT_TIMESTAMP
-      WHERE plan_id = $1 OR id = $1
-    `, [planId]);
-
-    broadcastEvent('ORCHESTRATION_EXECUTING', {
-      planId,
-      incidentId,
-      status: 'EXECUTING',
-      current_stage: 'DISPATCHING RESOURCES',
-      timestamp: Date.now(),
-    });
-
-    // B. Find and dispatch available responder
-    const availResp = await query(`
-      SELECT id, name, latitude, longitude FROM responders 
-      WHERE status = 'AVAILABLE' 
-      ORDER BY id ASC LIMIT 1
-    `);
-    let assignedUnitName = 'Alpha-14 SAR Unit';
-    let assignedRespId = 'R-14';
-    if (availResp.rowCount && availResp.rowCount > 0) {
-      const resp = availResp.rows[0];
-      assignedUnitName = resp.name;
-      assignedRespId = resp.id;
-      await query(`
-        UPDATE responders 
-        SET status = 'ASSIGNED', current_incident_id = $1, updated_at = CURRENT_TIMESTAMP
-        WHERE id = $2
-      `, [incidentId, resp.id]);
-      console.log(`[DB Mutation] Responder ${resp.name} (${resp.id}) set to ASSIGNED for ${incidentId}`);
-    }
-
-    // Create / Update missions record in PostgreSQL
-    const missionId = `MSN-${incidentId.replace(/[^0-9]/g, '') || Date.now().toString().slice(-4)}`;
-    const incDetailsRes = await query(`SELECT * FROM incidents WHERE id = $1`, [incidentId]);
-    const incRow = incDetailsRes.rows[0] || {};
-
-    await query(`
-      INSERT INTO missions (
-        id, incident_id, responder_id, title, location, latitude, longitude, status, priority, casualties_reported, hazards, perimeter, notes, updated_at
-      )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, 'ASSIGNED', $8, 0, $9, '250m', $10, CURRENT_TIMESTAMP)
-      ON CONFLICT (id) DO UPDATE
-      SET responder_id = EXCLUDED.responder_id, status = 'ASSIGNED', updated_at = CURRENT_TIMESTAMP
-    `, [
-      missionId,
-      incidentId,
-      assignedRespId,
-      `Operational Mission for ${incidentId}`,
-      incRow.location || 'Incident Area',
-      incRow.latitude || 52.0,
-      incRow.longitude || 48.0,
-      incRow.severity || 'HIGH',
-      [incRow.type || 'GENERAL'],
-      `Unit ${assignedUnitName} dispatched via human authorization.`
-    ]).catch(() => {});
-
-    // Update emergency_requests and incidents tables
-    await query(`
-      UPDATE emergency_requests 
-      SET assigned_responder_id = $1, status = 'ASSIGNED', updated_at = CURRENT_TIMESTAMP 
-      WHERE incident_id = $2
-    `, [assignedRespId, incidentId]).catch(() => {});
-
-    await query(`
-      UPDATE incidents 
-      SET assigned_responder_id = $1, status = 'ASSIGNED', updated_at = CURRENT_TIMESTAMP 
-      WHERE id = $2
-    `, [assignedRespId, incidentId]).catch(() => {});
-
-    // Record transition in incident_status_history
-    await query(`
-      INSERT INTO incident_status_history (id, request_id, incident_id, previous_status, new_status, actor, responder_id, notes, created_at)
-      VALUES ($1, $2, $3, 'ACCEPTED', 'ASSIGNED', $4, $5, $6, CURRENT_TIMESTAMP)
-    `, [
-      `HIST-${Date.now()}`,
-      incRow.request_id || null,
-      incidentId,
-      reviewer,
-      assignedRespId,
-      `Authority approved dispatch plan. Assigned unit ${assignedUnitName}.`
-    ]).catch(() => {});
-
-    // Broadcast 8-step lifecycle change via SSE
-    broadcastEvent('INCIDENT_STATUS_CHANGED', {
-      incidentId,
-      requestId: incRow.request_id || null,
-      responderId: assignedRespId,
-      previousStatus: 'ACCEPTED',
-      newStatus: 'ASSIGNED',
-      stepIndex: 2,
-      label: 'Responder Assigned',
-      description: `Rescue unit ${assignedUnitName} assigned to mission.`,
-      actor: reviewer,
-      timestamp: Date.now(),
-    });
-
-    // C. Find and dispatch available ambulance
-    const availAmb = await query(`
-      SELECT id, callsign FROM ambulances 
-      WHERE status = 'AVAILABLE' 
-      ORDER BY id ASC LIMIT 1
-    `);
-    if (availAmb.rowCount && availAmb.rowCount > 0) {
-      const amb = availAmb.rows[0];
-      await query(`
-        UPDATE ambulances 
-        SET status = 'DISPATCHED', last_update = 'Dispatched to ' || $1, updated_at = CURRENT_TIMESTAMP
-        WHERE id = $2
-      `, [rec?.affected_zone || incidentId, amb.id]);
-      console.log(`[DB Mutation] Ambulance ${amb.callsign} (${amb.id}) set to DISPATCHED`);
-    }
-
-    // D. Allocate equipment in database
-    const availEqp = await query(`
-      SELECT id, name, available FROM equipment 
-      WHERE available > 0 
-      ORDER BY available DESC LIMIT 1
-    `);
-    if (availEqp.rowCount && availEqp.rowCount > 0) {
-      const eqp = availEqp.rows[0];
-      const newAvail = Math.max(0, eqp.available - 1);
-      await query(`
-        UPDATE equipment 
-        SET available = $1, 
-            status = CASE WHEN $1 <= 0 THEN 'DEPLETED' ELSE 'PARTIAL' END,
-            updated_at = CURRENT_TIMESTAMP
-        WHERE id = $2
-      `, [newAvail, eqp.id]);
-      console.log(`[DB Mutation] Equipment ${eqp.name} available decremented to ${newAvail}`);
-    }
-
-    // E. Increase shelter occupancy in database
-    const openShelter = await query(`
-      SELECT id, name, capacity, occupancy FROM shelters 
-      WHERE status IN ('OPEN', 'ACTIVATING') 
-      ORDER BY (capacity - occupancy) DESC LIMIT 1
-    `);
-    if (openShelter.rowCount && openShelter.rowCount > 0) {
-      const shl = openShelter.rows[0];
-      const evacueesIntake = rec?.priority === 'CRITICAL' ? 35 : 20;
-      const newOcc = Math.min(shl.capacity, shl.occupancy + evacueesIntake);
-      await query(`
-        UPDATE shelters 
-        SET occupancy = $1,
-            status = CASE WHEN $1 >= capacity THEN 'NEAR FULL' ELSE 'OPEN' END,
-            updated_at = CURRENT_TIMESTAMP
-        WHERE id = $2
-      `, [newOcc, shl.id]);
-      console.log(`[DB Mutation] Shelter ${shl.name} occupancy increased from ${shl.occupancy} to ${newOcc}`);
-    }
-
-    // F. Create real dispatch_records
-    const dispatchId = `DSP-${Date.now().toString().slice(-4)}`;
-    await query(`
-      INSERT INTO dispatch_records (
-        id, resource_type, qty_approved, qty_dispatched, destination, incident_id, unit, status, approved_by
-      )
-      VALUES ($1, $2, 2, 2, $3, $4, $5, 'DISPATCHED', $6)
-    `, [
-      dispatchId,
-      rec?.recommended_resource || 'HEAVY RESCUE UNIT',
-      rec?.affected_zone || 'Disaster Sector',
-      incidentId,
-      assignedUnitName,
-      reviewer,
-    ]);
-
-    // G. Update target incident to RESPONDING, pending = false
-    await query(`
-      UPDATE incidents 
-      SET status = 'RESPONDING', responders_count = responders_count + 1, pending = FALSE, updated_at = CURRENT_TIMESTAMP
-      WHERE id = $1
-    `, [incidentId]);
-
-    // H. Create audit log
-    await query(`
-      INSERT INTO audit_logs (id, actor, action, entity, metadata)
-      VALUES ($1, $2, 'DISPATCH_APPROVED_EXECUTED', 'orchestration_plans', $3)
-    `, [
-      `AUD-${Date.now().toString().slice(-6)}`,
-      reviewer,
-      JSON.stringify({ planId, incidentId, assignedUnitName, dispatchId }),
-    ]);
-
-    // Broadcast state change across all connected clients
-    broadcastEvent('OPERATIONAL_STATE_CHANGED', {
-      planId,
-      incidentId,
-      assignedUnit: assignedUnitName,
-      dispatchId,
-      timestamp: Date.now(),
-    });
-
-    // ── STEP 7: MONITORING PHASE ─────────────────────────────────────
-    setTimeout(async () => {
-      console.log(`[Orchestrator] Entering MONITORING phase for Plan ${planId}...`);
-      await query(`
-        UPDATE orchestration_plans
-        SET status = 'MONITORING', current_stage = 'MONITORING SITUATION', updated_at = CURRENT_TIMESTAMP
-        WHERE plan_id = $1 OR id = $1
-      `, [planId]).catch(() => {});
-
-      broadcastEvent('ORCHESTRATION_MONITORING', {
-        planId,
+    if (decision === 'APPROVED') {
+      broadcastEvent('ORCHESTRATION_EXECUTING', {
+        planId: canonicalPlanId,
         incidentId,
-        status: 'MONITORING',
-        current_stage: 'MONITORING SITUATION',
+        status: 'EXECUTING',
+        current_stage: 'DISPATCHING RESOURCES',
         timestamp: Date.now(),
       });
 
-      // ── STEP 8: REASSESSMENT & NEXT CYCLE TRIGGER (0/11 -> 11/11) ────
-      if (this.continuousLoopActive) {
-        setTimeout(async () => {
-          console.log(`[Orchestrator] Reassessing disaster state after execution. Triggering next cycle...`);
-          
-          // Mark completed plan as SUPERSEDED / COMPLETE
-          await query(`
-            UPDATE orchestration_plans
-            SET status = 'COMPLETE', current_stage = 'COMPLETED', updated_at = CURRENT_TIMESTAMP
-            WHERE plan_id = $1 OR id = $1
-          `, [planId]).catch(() => {});
+      broadcastEvent('INCIDENT_STATUS_CHANGED', {
+        incidentId,
+        requestId: incRow.request_id || null,
+        responderId: assignedRespId,
+        previousStatus: 'ACCEPTED',
+        newStatus: 'ASSIGNED',
+        stepIndex: 2,
+        label: 'Responder Assigned',
+        description: `Rescue unit ${assignedUnitName} assigned to mission.`,
+        actor: reviewer,
+        timestamp: Date.now(),
+      });
 
-          // Trigger next cycle from 0/11!
-          this.runCycle(undefined, true).catch((err) => {
-            console.error('[Orchestrator] Next cycle execution error:', err);
-          });
-        }, 3000);
-      }
-    }, 3500);
+      broadcastEvent('OPERATIONAL_STATE_CHANGED', {
+        planId: canonicalPlanId,
+        incidentId,
+        assignedUnit: assignedUnitName,
+        dispatchId,
+        timestamp: Date.now(),
+      });
+
+      // Transition to MONITORING after dispatch phase
+      setTimeout(async () => {
+        console.log(`[Orchestrator] Entering MONITORING phase for Plan ${canonicalPlanId}...`);
+        await query(`
+          UPDATE orchestration_plans
+          SET status = 'MONITORING', current_stage = 'MONITORING SITUATION', updated_at = CURRENT_TIMESTAMP
+          WHERE plan_id = $1 OR id = $2
+        `, [canonicalPlanId, canonicalExecId]).catch(() => {});
+
+        broadcastEvent('ORCHESTRATION_MONITORING', {
+          planId: canonicalPlanId,
+          incidentId,
+          status: 'MONITORING',
+          current_stage: 'MONITORING SITUATION',
+          timestamp: Date.now(),
+        });
+      }, 3500);
+    }
 
     return {
       success: true,
-      decision: 'APPROVED',
-      planId,
-      dispatchId,
-      assignedUnit: assignedUnitName,
+      decision,
+      planId: canonicalPlanId,
+      approvalId: canonicalApprovalId,
+      dispatchId: decision === 'APPROVED' ? dispatchId : undefined,
+      assignedUnit: decision === 'APPROVED' ? assignedUnitName : undefined,
       reviewedBy: reviewer,
+      status: decision === 'APPROVED' ? 'APPROVED' : decision,
     };
   }
 

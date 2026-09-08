@@ -43,6 +43,7 @@ export async function runContinuousOrchestrationMigration() {
     await query(`
       ALTER TABLE ai_recommendations ADD COLUMN IF NOT EXISTS plan_version VARCHAR(32) DEFAULT 'V1';
       ALTER TABLE ai_recommendations ADD COLUMN IF NOT EXISTS cycle_number INT DEFAULT 1;
+      ALTER TABLE ai_recommendations ADD COLUMN IF NOT EXISTS rejection_reason TEXT;
     `);
 
     // 4. Add index for incident cycle queries

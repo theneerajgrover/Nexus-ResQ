@@ -57,7 +57,7 @@ export async function runOrchestrationApprovalMigration() {
       -- Update status constraint to support full lifecycle
       ALTER TABLE orchestration_plans DROP CONSTRAINT IF EXISTS orchestration_plans_status_check;
       ALTER TABLE orchestration_plans ADD CONSTRAINT orchestration_plans_status_check
-        CHECK (status IN ('INITIALIZED', 'IN_PROGRESS', 'WAITING_FOR_APPROVAL', 'APPROVED', 'PROCESSING', 'COMPLETE', 'COMPLETED', 'FAILED', 'REJECTED'));
+        CHECK (status IN ('INITIALIZED', 'IN_PROGRESS', 'WAITING_FOR_APPROVAL', 'APPROVED', 'PROCESSING', 'EXECUTING', 'MONITORING', 'REASSESSING', 'COMPLETE', 'COMPLETED', 'FAILED', 'REJECTED', 'DISMISSED', 'SUPERSEDED', 'NO_ACTIVE_INCIDENTS'));
 
       CREATE INDEX IF NOT EXISTS idx_orch_plans_plan_id ON orchestration_plans(plan_id);
     `);
@@ -83,6 +83,10 @@ export async function runOrchestrationApprovalMigration() {
       CREATE INDEX IF NOT EXISTS idx_approvals_status ON approvals(status);
       CREATE INDEX IF NOT EXISTS idx_approvals_created_at ON approvals(created_at DESC);
       CREATE UNIQUE INDEX IF NOT EXISTS idx_approvals_pending_plan ON approvals(plan_id) WHERE status = 'PENDING';
+
+      ALTER TABLE approvals DROP CONSTRAINT IF EXISTS approvals_status_check;
+      ALTER TABLE approvals ADD CONSTRAINT approvals_status_check
+        CHECK (status IN ('PENDING', 'APPROVED', 'REJECTED', 'EXPIRED', 'ACKNOWLEDGED', 'DISMISSED', 'SUPERSEDED'));
     `);
 
     // 3. Authority/Admin notifications table
@@ -113,6 +117,10 @@ export async function runOrchestrationApprovalMigration() {
       ADD COLUMN IF NOT EXISTS critic_verification JSONB DEFAULT '{}'::jsonb,
       ADD COLUMN IF NOT EXISTS validation_status VARCHAR(50) DEFAULT 'VALIDATED',
       ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP;
+
+      ALTER TABLE ai_recommendations DROP CONSTRAINT IF EXISTS ai_recommendations_status_check;
+      ALTER TABLE ai_recommendations ADD CONSTRAINT ai_recommendations_status_check
+        CHECK (status IN ('PENDING_APPROVAL', 'APPROVED', 'REJECTED', 'REPLANNING', 'COMPLETED', 'DISMISSED', 'SUPERSEDED'));
     `);
 
     // 5. Ensure the 11 agents in agent_pipeline_state have standard names and codes
