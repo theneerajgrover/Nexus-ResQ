@@ -121,7 +121,7 @@ function agentProgress(customList = activeAgentsData) {
 }
 
 // ── Human approval modal ──────────────────────────────────────────────────────
-function ApprovalModal({
+export function ApprovalModal({
   onClose,
   activePlan,
   pendingRecommendation,
@@ -3269,9 +3269,9 @@ export default function CommandHome() {
 
       {/* 11/11 AI Orchestration Completion Notification Banner */}
       <AnimatePresence>
-        {showCompletionBanner && !showApproval && (
+        {showCompletionBanner && activeApproval && !showApproval && (
           <BottomCompletionBanner
-            planId={activeApproval?.plan_id || activePlan?.plan_id || activePlan?.id || 'REC-2849'}
+            planId={activeApproval?.plan_id || activeApproval?.approval_id}
             onOpenApproval={handleOpenApprovalModal}
           />
         )}

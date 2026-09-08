@@ -25,6 +25,7 @@ const navConfig: Record<NonNullable<Role>, { label: string; path: string }[]> = 
   ],
   authority_command: [
     { label: 'HOME', path: '/command' },
+    { label: 'PENDING APPROVALS', path: '/command/pending-approvals' },
     { label: 'COMMAND ORBIT', path: '/command/orbit' },
     { label: 'INTELLIGENCE', path: '/command/intelligence' },
     { label: 'WARNINGS', path: '/command/warnings' },

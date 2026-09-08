@@ -16,6 +16,7 @@ import ResponderHistory from '../features/responder/ResponderHistory';
 import CommandHome from '../features/command/CommandHome';
 import AuthorityWeather from '../features/command/AuthorityWeather';
 import AuthorityWarnings from '../features/command/AuthorityWarnings';
+import PendingApprovalsPage from '../features/command/PendingApprovalsPage';
 import ResourceManagerHome from '../features/resources/ResourceManagerHome';
 import { useAppStore, type Role } from '../store/useAppStore';
 
@@ -179,6 +180,10 @@ export const router = createBrowserRouter([
       {
         path: 'command',
         element: <CommandRoute><CommandHome /></CommandRoute>,
+      },
+      {
+        path: 'command/pending-approvals',
+        element: <CommandRoute><PendingApprovalsPage /></CommandRoute>,
       },
       {
         path: 'command/orbit',
