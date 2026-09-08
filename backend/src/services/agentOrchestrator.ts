@@ -20,7 +20,8 @@ export interface OrchestrationResult {
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export class AgentOrchestratorService {
-  private isExecuting = false;
+  private runningIncidents = new Set<string>();
+  private runningPlans = new Set<string>();
   private activeCycleNumber = 1;
   private continuousLoopActive = true;
 
@@ -28,89 +29,106 @@ export class AgentOrchestratorService {
    * Run one full closed-loop cycle of the 11-agent pipeline:
    * 0/11 -> 11/11 (with real PostgreSQL queries and validations).
    * At 11/11, pauses at Human Approval Gate and notifies Command Authority.
+   * Concurrently isolated: Multiple incidents can execute their 11 agents simultaneously.
    */
   async runCycle(targetIncidentId?: string, isContinuous = true): Promise<OrchestrationResult | null> {
-    if (this.isExecuting) {
-      console.log(`[Orchestrator] Cycle execution already active. Skipping duplicate trigger.`);
-      return null;
+    // ── STEP 1: ACTIVE DISASTER & TARGET INCIDENT DETECTION ─────────
+    let incident: any = null;
+    if (targetIncidentId) {
+      if (this.runningIncidents.has(targetIncidentId)) {
+        console.log(`[Orchestrator] Cycle execution already active for incident ${targetIncidentId}. Skipping duplicate trigger.`);
+        return null;
+      }
+      const res = await query(`SELECT * FROM incidents WHERE id = $1`, [targetIncidentId]);
+      incident = res.rows[0];
+      if (!incident) {
+        console.log(`[Orchestrator] Target incident ${targetIncidentId} not found in database.`);
+        return null;
+      }
     }
-    this.isExecuting = true;
 
-    try {
-      // ── STEP 1: ACTIVE DISASTER & TARGET INCIDENT DETECTION ─────────
-      let incident: any = null;
-      if (targetIncidentId) {
-        const res = await query(`SELECT * FROM incidents WHERE id = $1`, [targetIncidentId]);
-        incident = res.rows[0];
-      }
+    if (!incident) {
+      // Prioritize pending incidents first, then critical/high active incidents that do not already have an active/pending plan or responder
+      // Exclude incidents currently being processed in runningIncidents
+      const activeIds = Array.from(this.runningIncidents);
+      const res = await query(`
+        SELECT * FROM incidents 
+        WHERE (pending = TRUE OR status = 'PENDING' OR (status = 'ACTIVE' AND assigned_responder_id IS NULL))
+          AND status NOT IN ('RESPONDING', 'RESOLVED', 'CANCELLED')
+          AND id NOT IN (
+            SELECT DISTINCT incident_id FROM approvals WHERE status = 'PENDING' AND incident_id IS NOT NULL
+          )
+          ${activeIds.length > 0 ? `AND id NOT IN (${activeIds.map((_, i) => `$${i + 1}`).join(', ')})` : ''}
+        ORDER BY pending DESC, 
+                 (CASE severity WHEN 'CRITICAL' THEN 1 WHEN 'HIGH' THEN 2 WHEN 'MODERATE' THEN 3 ELSE 4 END) ASC, 
+                 created_at DESC 
+        LIMIT 1
+      `, activeIds);
+      incident = res.rows[0];
+    }
 
-      if (!incident) {
-        // Prioritize pending incidents first, then critical/high active incidents that do not already have an active/pending plan or responder
-        const res = await query(`
-          SELECT * FROM incidents 
-          WHERE (pending = TRUE OR status = 'PENDING' OR (status = 'ACTIVE' AND assigned_responder_id IS NULL))
-            AND status NOT IN ('RESPONDING', 'RESOLVED', 'CANCELLED')
-            AND id NOT IN (
-              SELECT DISTINCT incident_id FROM approvals WHERE status = 'PENDING' AND incident_id IS NOT NULL
-            )
-          ORDER BY pending DESC, 
-                   (CASE severity WHEN 'CRITICAL' THEN 1 WHEN 'HIGH' THEN 2 WHEN 'MODERATE' THEN 3 ELSE 4 END) ASC, 
-                   created_at DESC 
-          LIMIT 1
-        `);
-        incident = res.rows[0];
-      }
-
-      // If no active disaster/incident exists in the database
-      if (!incident) {
-        console.log(`[Orchestrator] No active disaster incidents found in database. Entering monitoring state.`);
-        
-        // Reset agents to IDLE
+    // If no active disaster/incident exists in the database
+    if (!incident) {
+      console.log(`[Orchestrator] No active disaster incidents found in database. Entering monitoring state.`);
+      
+      // If nothing is running anywhere, reset agent_pipeline_state to IDLE
+      if (this.runningIncidents.size === 0) {
         await query(`
           UPDATE agent_pipeline_state
           SET status = 'IDLE', progress = 0, last_event = 'System standby — monitoring active channels', updated_at = CURRENT_TIMESTAMP
-        `);
-
-        // Record idle state in orchestration_plans
-        const idlePlanId = `MONITORING-${Date.now().toString().slice(-6)}`;
-        await query(`
-          INSERT INTO orchestration_plans (
-            id, plan_id, status, current_step, total_steps, current_stage, created_at, updated_at
-          )
-          VALUES ($1, $1, 'NO_ACTIVE_INCIDENTS', 0, 11, 'MONITORING SYSTEM', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-        `, [idlePlanId]).catch(() => {});
-
-        broadcastEvent('ORCHESTRATION_IDLE', {
-          status: 'NO_ACTIVE_INCIDENTS',
-          message: 'NO ACTIVE RESPONSE PLAN · MONITORING SYSTEM',
-          timestamp: Date.now(),
-        });
-
-        this.isExecuting = false;
-        return null;
+        `).catch(() => {});
       }
 
-      // Determine cycle number & plan version
+      // Record idle state in orchestration_plans if not exists
+      const idlePlanId = `MONITORING-${Date.now().toString().slice(-6)}`;
+      await query(`
+        INSERT INTO orchestration_plans (
+          id, plan_id, status, orchestration_status, approval_status, current_step, total_steps, current_stage, created_at, updated_at
+        )
+        VALUES ($1, $1, 'NO_ACTIVE_INCIDENTS', 'IDLE', 'NONE', 0, 11, 'MONITORING SYSTEM', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `, [idlePlanId]).catch(() => {});
+
+      broadcastEvent('ORCHESTRATION_IDLE', {
+        status: 'NO_ACTIVE_INCIDENTS',
+        message: 'NO ACTIVE RESPONSE PLAN · MONITORING SYSTEM',
+        timestamp: Date.now(),
+      });
+
+      return null;
+    }
+
+    // Register active execution locks for this incident
+    this.runningIncidents.add(incident.id);
+    let planId = '';
+    let execId = '';
+    let cycleNumber = 1;
+    let planVersion = 'V1';
+
+    try {
+      // Determine cycle number & plan version local to this incident
       const prevCyclesRes = await query(`
         SELECT COUNT(*) as count FROM orchestration_plans 
-        WHERE incident_id = $1 AND status IN ('APPROVED', 'EXECUTING', 'COMPLETED', 'WAITING_FOR_APPROVAL')
+        WHERE incident_id = $1 AND status IN ('APPROVED', 'EXECUTING', 'COMPLETED', 'WAITING_FOR_APPROVAL', 'COMPLETE')
       `, [incident.id]);
       const pastCycles = parseInt(prevCyclesRes.rows[0]?.count || '0', 10);
-      this.activeCycleNumber = Math.max(this.activeCycleNumber, pastCycles + 1);
-      const planVersion = `V${this.activeCycleNumber}`;
-      const planId = `PLAN-${incident.id.replace('INC-', '')}-${planVersion}-${Date.now().toString().slice(-4)}`;
-      const execId = `EXEC-${Date.now().toString().slice(-6)}-${incident.id.replace('INC-', '')}`;
+      cycleNumber = pastCycles + 1;
+      this.activeCycleNumber = Math.max(this.activeCycleNumber, cycleNumber);
+      planVersion = `V${cycleNumber}`;
+      planId = `PLAN-${incident.id.replace('INC-', '')}-${planVersion}-${Date.now().toString().slice(-4)}`;
+      execId = `EXEC-${Date.now().toString().slice(-6)}-${incident.id.replace('INC-', '')}`;
+
+      this.runningPlans.add(planId);
 
       console.log(`\n============================================================`);
-      console.log(`[Orchestrator] Starting Cycle #${this.activeCycleNumber} (${planVersion}) for ${incident.id} [${incident.severity} - ${incident.type}]`);
+      console.log(`[Orchestrator] Starting Cycle #${cycleNumber} (${planVersion}) for ${incident.id} [${incident.severity} - ${incident.type}]`);
       console.log(`[Orchestrator] Target Plan ID: ${planId}`);
       console.log(`============================================================\n`);
 
-      // ── STEP 2: RESET PIPELINE TO 0/11 IN POSTGRESQL ───────────────
+      // ── STEP 2: PIPELINE INITIALIZATION IN POSTGRESQL ───────────────
       await query(`
         UPDATE agent_pipeline_state
         SET status = 'WAITING', progress = 0, last_event = 'Queued for Cycle #' || $1, updated_at = CURRENT_TIMESTAMP
-      `, [this.activeCycleNumber]);
+      `, [cycleNumber]);
 
       // Supersede older pending plans/approvals for this specific incident
       await query(`
@@ -121,7 +139,7 @@ export class AgentOrchestratorService {
 
       await query(`
         UPDATE orchestration_plans
-        SET status = 'SUPERSEDED', updated_at = CURRENT_TIMESTAMP
+        SET status = 'SUPERSEDED', approval_status = 'SUPERSEDED', updated_at = CURRENT_TIMESTAMP
         WHERE incident_id = $1 AND status = 'WAITING_FOR_APPROVAL'
       `, [incident.id]).catch(() => {});
 
@@ -131,14 +149,15 @@ export class AgentOrchestratorService {
         WHERE incident_id = $1 AND status = 'PENDING_APPROVAL'
       `, [incident.id]).catch(() => {});
 
-      // Create new orchestration_plans record at 0/11
+      // Create new orchestration_plans record at 0/11 with all lifecycle columns
       await query(`
         INSERT INTO orchestration_plans (
-          id, plan_id, incident_id, status, current_step, total_steps,
-          current_stage, cycle_number, plan_version, started_at, created_at, updated_at
+          id, plan_id, incident_id, status, orchestration_status, approval_status, execution_status,
+          current_step, completed_agent_count, total_steps,
+          current_stage, current_agent, cycle_number, plan_version, orchestration_version, started_at, created_at, updated_at
         )
-        VALUES ($1, $2, $3, 'PROCESSING', 0, 11, 'CONTINUOUS INGESTION', $4, $5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-      `, [execId, planId, incident.id, this.activeCycleNumber, planVersion]);
+        VALUES ($1, $2, $3, 'PROCESSING', 'PROCESSING', 'PENDING', 'NOT_STARTED', 0, 0, 11, 'CONTINUOUS INGESTION', 'Continuous Ingestion', $4, $5, $5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `, [execId, planId, incident.id, cycleNumber, planVersion]);
 
       // Broadcast ORCHESTRATION_STARTED (0/11)
       broadcastEvent('ORCHESTRATION_STARTED', {
@@ -183,10 +202,26 @@ export class AgentOrchestratorService {
         incident,
         planId,
         planVersion,
-        cycleNumber: this.activeCycleNumber,
+        cycleNumber,
       };
 
-      // Helper to update agent status in PostgreSQL and broadcast via SSE
+      // Helper to check if an agent has already completed for this plan (resumable / idempotent execution)
+      const isAgentAlreadyCompleted = async (agentId: number): Promise<{ completed: boolean; result?: any }> => {
+        const res = await query(
+          `SELECT status, result FROM agent_execution_records WHERE plan_id = $1 AND agent_id = $2 AND status = 'COMPLETE' ORDER BY created_at DESC LIMIT 1`,
+          [planId, agentId]
+        );
+        if (res.rowCount && res.rowCount > 0) {
+          let parsedResult = res.rows[0].result;
+          if (typeof parsedResult === 'string') {
+            try { parsedResult = JSON.parse(parsedResult); } catch {}
+          }
+          return { completed: true, result: parsedResult };
+        }
+        return { completed: false };
+      };
+
+      // Helper to update agent status isolated per plan in PostgreSQL and broadcast via SSE
       const updateAgentState = async (
         agentId: number,
         agentName: string,
@@ -194,33 +229,64 @@ export class AgentOrchestratorService {
         status: 'RUNNING' | 'COMPLETE' | 'FAILED',
         progress: number,
         lastEvent: string,
-        resultPayload: any = {}
+        resultPayload: any = {},
+        errorText?: string
       ) => {
+        // 1. Isolated upsert into agent_execution_records scoped strictly to (planId, agentId)
+        const existingRec = await query(`
+          SELECT id FROM agent_execution_records WHERE plan_id = $1 AND agent_id = $2 ORDER BY created_at DESC LIMIT 1
+        `, [planId, agentId]);
+
+        const completedAt = status === 'COMPLETE' ? new Date() : null;
+
+        if (existingRec.rowCount && existingRec.rowCount > 0) {
+          const recordId = existingRec.rows[0].id;
+          await query(`
+            UPDATE agent_execution_records
+            SET status = $1,
+                completed_at = COALESCE($2, completed_at),
+                result = $3,
+                error = $4,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = $5
+          `, [status, completedAt, JSON.stringify(resultPayload), errorText || null, recordId]);
+        } else {
+          const recordId = `AER-${Date.now()}-${agentId}-${Math.floor(Math.random() * 1000)}`;
+          await query(`
+            INSERT INTO agent_execution_records (
+              id, agent_id, agent_name, incident_id, plan_id, status, started_at, completed_at, result, confidence, error, created_at, updated_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, $7, $8, 94.5, $9, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+          `, [recordId, agentId, agentName, incident.id, planId, status, completedAt, JSON.stringify(resultPayload), errorText || null]);
+        }
+
+        // 2. Update orchestration_plans for this specific plan
+        if (status === 'COMPLETE') {
+          await query(`
+            UPDATE orchestration_plans
+            SET current_step = $1, completed_agent_count = $1, current_stage = $2, current_agent = $3, updated_at = CURRENT_TIMESTAMP
+            WHERE id = $4
+          `, [agentId, stageCode, agentName, execId]);
+        } else if (status === 'FAILED') {
+          await query(`
+            UPDATE orchestration_plans
+            SET status = 'FAILED', orchestration_status = 'FAILED', current_stage = $1, current_agent = $2, updated_at = CURRENT_TIMESTAMP
+            WHERE id = $3
+          `, [`${stageCode} FAILED`, agentName, execId]);
+        }
+
+        // 3. Update agent_pipeline_state for dashboard monitoring
         await query(`
           UPDATE agent_pipeline_state
           SET status = $1, progress = $2, last_event = $3, updated_at = CURRENT_TIMESTAMP
           WHERE agent_id = $4
-        `, [status, progress, lastEvent, agentId]);
+        `, [status, progress, lastEvent, agentId]).catch(() => {});
 
-        if (status === 'COMPLETE') {
-          const recordId = `AER-${Date.now()}-${agentId}`;
-          await query(`
-            INSERT INTO agent_execution_records (
-              id, agent_id, agent_name, incident_id, status, started_at, completed_at, result, confidence, plan_id
-            )
-            VALUES ($1, $2, $3, $4, 'COMPLETE', CURRENT_TIMESTAMP - interval '300 milliseconds', CURRENT_TIMESTAMP, $5, 94.5, $6)
-          `, [recordId, agentId, agentName, incident.id, JSON.stringify(resultPayload), planId]);
-
-          await query(`
-            UPDATE orchestration_plans
-            SET current_step = $1, current_stage = $2, updated_at = CURRENT_TIMESTAMP
-            WHERE id = $3
-          `, [agentId, stageCode, execId]);
-        }
-
+        // 4. Broadcast real-time SSE event with isolated plan identity
         broadcastEvent('AGENT_STATUS_UPDATED', {
           execId,
           plan_id: planId,
+          incidentId: incident.id,
           agentId,
           name: agentName,
           status,
@@ -229,8 +295,8 @@ export class AgentOrchestratorService {
           current_step: status === 'COMPLETE' ? agentId : Math.max(0, agentId - 1),
           total_steps: 11,
           current_stage: stageCode,
-          orchestration_status: 'PROCESSING',
-          cycle_number: this.activeCycleNumber,
+          orchestration_status: status === 'FAILED' ? 'FAILED' : 'PROCESSING',
+          cycle_number: cycleNumber,
           plan_version: planVersion,
         });
       };
@@ -617,7 +683,7 @@ export class AgentOrchestratorService {
         proposedActions,
         JSON.stringify(criticValidation),
         planVersion,
-        this.activeCycleNumber,
+        cycleNumber,
       ]);
 
       const approvalId = `APP-${Date.now().toString().slice(-6)}`;
@@ -626,16 +692,21 @@ export class AgentOrchestratorService {
           approval_id, incident_id, plan_id, requested_by, approval_type, status, expires_at
         )
         VALUES ($1, $2, $3, 'AI_ORCHESTRATOR', 'DISPATCH_PLAN', 'PENDING', CURRENT_TIMESTAMP + interval '4 hours')
-        ON CONFLICT (approval_id) DO NOTHING
+        ON CONFLICT (approval_id) DO UPDATE SET status = 'PENDING', updated_at = CURRENT_TIMESTAMP
       `, [approvalId, incident.id, planId]);
 
-      // Update orchestration_plans to WAITING_FOR_APPROVAL
+      // Update orchestration_plans to WAITING_FOR_APPROVAL with all persistent lifecycle fields
       await query(`
         UPDATE orchestration_plans
         SET status = 'WAITING_FOR_APPROVAL',
+            orchestration_status = 'COMPLETE',
+            approval_status = 'PENDING',
+            execution_status = 'NOT_STARTED',
             current_step = 11,
+            completed_agent_count = 11,
             total_steps = 11,
             current_stage = 'WAITING FOR APPROVAL',
+            current_agent = 'Analytics',
             approval_id = $1,
             critic_validation = $2,
             completed_at = CURRENT_TIMESTAMP,
@@ -666,7 +737,7 @@ export class AgentOrchestratorService {
         incidentId: incident.id,
         current_step: 11,
         total_steps: 11,
-        cycle_number: this.activeCycleNumber,
+        cycle_number: cycleNumber,
         plan_version: planVersion,
         status: 'WAITING_FOR_APPROVAL',
         approval: {
@@ -699,7 +770,7 @@ export class AgentOrchestratorService {
         incidentId: incident.id,
         planId,
         approvalId,
-        cycleNumber: this.activeCycleNumber,
+        cycleNumber,
         status: 'WAITING_FOR_APPROVAL',
         agentsExecuted: 11,
         confidence: 94.5,
@@ -717,10 +788,21 @@ export class AgentOrchestratorService {
       };
     } catch (err: any) {
       console.error('[Orchestrator Error] Cycle execution failed:', err);
-      broadcastEvent('ORCHESTRATION_FAILED', { error: err.message, timestamp: Date.now() });
+      broadcastEvent('ORCHESTRATION_FAILED', {
+        execId,
+        plan_id: planId,
+        incidentId: incident?.id,
+        error: err.message,
+        timestamp: Date.now(),
+      });
       throw err;
     } finally {
-      this.isExecuting = false;
+      if (incident?.id) {
+        this.runningIncidents.delete(incident.id);
+      }
+      if (planId) {
+        this.runningPlans.delete(planId);
+      }
     }
   }
 
@@ -820,13 +902,37 @@ export class AgentOrchestratorService {
     try {
       await client.query('BEGIN');
 
-      // A. Update approvals table
-      await client.query(`
+      // A. Update approvals table atomically (conditional on PENDING)
+      const updApp = await client.query(`
         UPDATE approvals
         SET status = $1, decision = $1, reviewed_by = $2, reviewed_at = CURRENT_TIMESTAMP,
             reason = $3, updated_at = CURRENT_TIMESTAMP
-        WHERE plan_id = $4 OR approval_id = $4 OR ($5::text IS NOT NULL AND approval_id = $5)
+        WHERE (plan_id = $4 OR approval_id = $4 OR ($5::text IS NOT NULL AND approval_id = $5))
+          AND status = 'PENDING'
+        RETURNING *
       `, [decision, reviewer, comments || `Human decision: ${decision}`, canonicalPlanId, canonicalApprovalId || null]);
+
+      if (updApp.rowCount === 0) {
+        // Already decided or concurrent race winner! Rollback and check current state safely
+        await client.query('ROLLBACK');
+        const checkApp = await query(
+          `SELECT status, decision, reviewed_by, reviewed_at FROM approvals WHERE plan_id = $1 OR approval_id = $1 ORDER BY created_at DESC LIMIT 1`,
+          [canonicalPlanId]
+        );
+        const curr = checkApp.rows[0];
+        if (curr && (curr.status === decision || curr.decision === decision)) {
+          return {
+            success: true,
+            decision,
+            planId: canonicalPlanId,
+            approvalId: canonicalApprovalId,
+            status: curr.status,
+            alreadyDecided: true,
+            message: `Response plan ${canonicalPlanId} has already been ${curr.status.toLowerCase()}.`,
+          };
+        }
+        throw new Error(`Plan ${canonicalPlanId} is currently in status '${curr?.status || 'UNKNOWN'}' and cannot be transitioned to ${decision}.`);
+      }
 
       // Supersede any other pending approvals for this incident
       await client.query(`
@@ -850,16 +956,30 @@ export class AgentOrchestratorService {
         incidentId,
       ]);
 
-      // C. Update orchestration_plans table
+      // C. Update orchestration_plans table with complete lifecycle status fields
       await client.query(`
         UPDATE orchestration_plans
-        SET status = $1, approved_by = $2, approved_at = CURRENT_TIMESTAMP,
-            rejection_reason = $3, updated_at = CURRENT_TIMESTAMP
-        WHERE plan_id = $4 OR id = $4 OR ($5::text IS NOT NULL AND id = $5)
+        SET status = $1,
+            approval_status = $2,
+            execution_status = $3,
+            approved_by = $4,
+            approved_at = $5,
+            rejected_by = $6,
+            rejected_at = $7,
+            rejection_reason = $8,
+            execution_started_at = $9,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE plan_id = $10 OR id = $10 OR ($11::text IS NOT NULL AND id = $11)
       `, [
         decision === 'APPROVED' ? 'EXECUTING' : decision,
-        reviewer,
-        decision === 'REJECTED' ? comments : null,
+        decision,
+        decision === 'APPROVED' ? 'DISPATCHED' : 'NOT_STARTED',
+        decision === 'APPROVED' ? reviewer : null,
+        decision === 'APPROVED' ? new Date() : null,
+        decision === 'REJECTED' ? reviewer : null,
+        decision === 'REJECTED' ? new Date() : null,
+        decision === 'REJECTED' ? (comments || 'Rejected by Command Authority') : null,
+        decision === 'APPROVED' ? new Date() : null,
         canonicalPlanId,
         canonicalExecId || null,
       ]);
@@ -1197,7 +1317,9 @@ export class AgentOrchestratorService {
     ]);
 
     return {
-      isExecuting: this.isExecuting,
+      isExecuting: this.runningIncidents.size > 0,
+      activeIncidentIds: Array.from(this.runningIncidents),
+      activePlanIds: Array.from(this.runningPlans),
       cycleNumber: this.activeCycleNumber,
       agents: agentsRes.rows,
       activePlan: activePlanRes.rows[0] || null,

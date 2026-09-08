@@ -39,8 +39,8 @@ approvalsRouter.get('/pending', async (req: Request, res: Response): Promise<voi
         r.risk_flags,
         r.proposed_actions_list,
         r.critic_verification,
-        r.plan_version,
-        r.cycle_number,
+        coalesce(r.plan_version, p.plan_version, 'V1') as plan_version,
+        coalesce(r.cycle_number, p.cycle_number, 1) as cycle_number,
         i.title as incident_title,
         i.type as incident_type,
         i.severity as incident_severity,
@@ -49,10 +49,10 @@ approvalsRouter.get('/pending', async (req: Request, res: Response): Promise<voi
         i.longitude as incident_longitude,
         i.status as incident_status,
         p.id as exec_id,
-        p.current_step as completed_agents,
-        p.total_steps as total_agents,
+        coalesce(p.completed_agent_count, p.current_step, 11) as completed_agents,
+        coalesce(p.total_steps, 11) as total_agents,
         p.current_stage,
-        p.status as orchestration_status,
+        coalesce(p.orchestration_status, p.status) as orchestration_status,
         p.critic_validation
       FROM approvals a
       LEFT JOIN ai_recommendations r ON a.plan_id = r.id

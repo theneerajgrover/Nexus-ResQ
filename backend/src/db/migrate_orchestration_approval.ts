@@ -53,6 +53,16 @@ export async function runOrchestrationApprovalMigration() {
       ALTER TABLE orchestration_plans ADD COLUMN IF NOT EXISTS approved_by VARCHAR(100);
       ALTER TABLE orchestration_plans ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ;
       ALTER TABLE orchestration_plans ADD COLUMN IF NOT EXISTS approval_id VARCHAR(64);
+      ALTER TABLE orchestration_plans ADD COLUMN IF NOT EXISTS orchestration_status VARCHAR(50) DEFAULT 'IN_PROGRESS';
+      ALTER TABLE orchestration_plans ADD COLUMN IF NOT EXISTS approval_status VARCHAR(50) DEFAULT 'PENDING';
+      ALTER TABLE orchestration_plans ADD COLUMN IF NOT EXISTS execution_status VARCHAR(50) DEFAULT 'NOT_STARTED';
+      ALTER TABLE orchestration_plans ADD COLUMN IF NOT EXISTS orchestration_version VARCHAR(50);
+      ALTER TABLE orchestration_plans ADD COLUMN IF NOT EXISTS completed_agent_count INT DEFAULT 0;
+      ALTER TABLE orchestration_plans ADD COLUMN IF NOT EXISTS current_agent VARCHAR(100);
+      ALTER TABLE orchestration_plans ADD COLUMN IF NOT EXISTS rejected_by VARCHAR(100);
+      ALTER TABLE orchestration_plans ADD COLUMN IF NOT EXISTS rejected_at TIMESTAMPTZ;
+      ALTER TABLE orchestration_plans ADD COLUMN IF NOT EXISTS execution_started_at TIMESTAMPTZ;
+      ALTER TABLE orchestration_plans ADD COLUMN IF NOT EXISTS execution_completed_at TIMESTAMPTZ;
 
       -- Update status constraint to support full lifecycle
       ALTER TABLE orchestration_plans DROP CONSTRAINT IF EXISTS orchestration_plans_status_check;
@@ -60,6 +70,7 @@ export async function runOrchestrationApprovalMigration() {
         CHECK (status IN ('INITIALIZED', 'IN_PROGRESS', 'WAITING_FOR_APPROVAL', 'APPROVED', 'PROCESSING', 'EXECUTING', 'MONITORING', 'REASSESSING', 'COMPLETE', 'COMPLETED', 'FAILED', 'REJECTED', 'DISMISSED', 'SUPERSEDED', 'NO_ACTIVE_INCIDENTS'));
 
       CREATE INDEX IF NOT EXISTS idx_orch_plans_plan_id ON orchestration_plans(plan_id);
+      CREATE INDEX IF NOT EXISTS idx_aer_plan_agent ON agent_execution_records(plan_id, agent_id);
     `);
 
     // 2. Human approvals table (Human Supervision Gate)
