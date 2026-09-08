@@ -346,20 +346,20 @@ export default function PendingApprovalsPage() {
                     </div>
                     <div className="p-2.5 rounded-xl bg-white/[0.02] border border-white/[0.05]">
                       <div className="text-[10px] text-white/30">ASSIGNED UNIT</div>
-                      <div className="font-bold text-cyan-300 text-xs mt-0.5 truncate">
-                        {plan.recommended_resource || 'Alpha-14 SAR Unit'}
+                      <div className="font-bold text-cyan-300 text-xs mt-0.5 truncate" title={plan.recommended_resource || 'Units Pending'}>
+                        {plan.recommended_resource || 'Units Pending'}
                       </div>
                     </div>
                     <div className="p-2.5 rounded-xl bg-white/[0.02] border border-white/[0.05]">
                       <div className="text-[10px] text-white/30">TARGET SHELTER</div>
-                      <div className="font-bold text-purple-300 text-xs mt-0.5 truncate">
-                        {plan.recommended_shelter || 'Riverside High'}
+                      <div className="font-bold text-purple-300 text-xs mt-0.5 truncate" title={plan.recommended_shelter || 'Reception Center'}>
+                        {plan.recommended_shelter || 'Reception Center'}
                       </div>
                     </div>
                     <div className="p-2.5 rounded-xl bg-white/[0.02] border border-white/[0.05]">
                       <div className="text-[10px] text-white/30">EST. POPULATION</div>
                       <div className="font-bold text-amber-300 text-sm mt-0.5">
-                        {plan.estimated_people_affected || 180}
+                        {plan.estimated_people_affected ?? 0}
                       </div>
                     </div>
                   </div>

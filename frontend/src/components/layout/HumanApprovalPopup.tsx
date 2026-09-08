@@ -269,7 +269,7 @@ export default function HumanApprovalPopup() {
                   RECOMMENDED ACTION:
                 </span>
                 <span className="text-white font-medium">
-                  {currentItem.action || 'Deploy heavy extrication unit and activate evacuation corridor'}
+                  {currentItem.action || 'Deploy designated SAR units and secure emergency perimeter'}
                 </span>
               </div>
 
@@ -278,7 +278,7 @@ export default function HumanApprovalPopup() {
                 <span>
                   Resources requested:{' '}
                   <span className="text-emerald-400 font-bold">
-                    {currentItem.recommended_resource || 'Heavy Rescue Unit Alpha-14'}
+                    {currentItem.recommended_resource || 'SAR Tactical Units'}
                   </span>
                   {currentItem.recommended_teams_count && (
                     <span className="text-white/40"> ({currentItem.recommended_teams_count} Teams)</span>
