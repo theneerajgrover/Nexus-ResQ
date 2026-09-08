@@ -71,7 +71,7 @@ async function runTests() {
     console.log('✅ DB status verified: PENDING');
 
     // Verify GET /api/approvals/pending returns the plan with all real fields
-    const pendingRes = await fetch(`${API_BASE}/approvals/pending`).then((r) => r.json());
+    const pendingRes: any = await fetch(`${API_BASE}/approvals/pending`).then((r) => r.json());
     if (!pendingRes.success || !Array.isArray(pendingRes.data)) {
       throw new Error('Test A Failed: GET /api/approvals/pending returned unsuccessful response');
     }
@@ -93,7 +93,7 @@ async function runTests() {
     console.log(`   - Orchestration Status: ${foundPending.orchestration_status}`);
 
     // Verify GET /api/command/overview shows pendingApproval
-    const overviewRes = await fetch(`${API_BASE}/command/overview`).then((r) => r.json());
+    const overviewRes: any = await fetch(`${API_BASE}/command/overview`).then((r) => r.json());
     if (!overviewRes.data?.pendingApproval || overviewRes.data.pendingApproval.plan_id !== planId) {
       throw new Error(`Test A Failed: Command overview does not point to plan ${planId}`);
     }
@@ -109,7 +109,7 @@ async function runTests() {
       comments: 'Authorized for immediate deployment',
     };
 
-    const actionRes = await fetch(`${API_BASE}/command/recommendations/${planId}/action`, {
+    const actionRes: any = await fetch(`${API_BASE}/command/recommendations/${planId}/action`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(approvePayload),
@@ -163,7 +163,7 @@ async function runTests() {
     // ------------------------------------------------------------
     console.log('\n--- TEST C: Page Refresh & Banner Disappearance ---');
     // Query GET /api/approvals/pending again
-    const postPendingRes = await fetch(`${API_BASE}/approvals/pending`).then((r) => r.json());
+    const postPendingRes: any = await fetch(`${API_BASE}/approvals/pending`).then((r) => r.json());
     const isStillPending = postPendingRes.data?.some((p: any) => p.plan_id === planId || p.approval_id === approvalId);
     if (isStillPending) {
       throw new Error(`Test C Failed: Approved plan ${planId} still returned in pending approvals list`);
@@ -171,7 +171,7 @@ async function runTests() {
     console.log('✅ Plan successfully removed from pending approvals list');
 
     // Query GET /api/command/overview (simulates browser refresh on Command Home)
-    const refreshOverview = await fetch(`${API_BASE}/command/overview`).then((r) => r.json());
+    const refreshOverview: any = await fetch(`${API_BASE}/command/overview`).then((r) => r.json());
     const refreshedPendingApproval = refreshOverview.data?.pendingApproval;
     if (refreshedPendingApproval && (refreshedPendingApproval.plan_id === planId || refreshedPendingApproval.approval_id === approvalId)) {
       throw new Error(`Test C Failed: Approved plan ${planId} still returned as pendingApproval on refresh`);
@@ -208,7 +208,7 @@ async function runTests() {
       comments: 'Tactical route blocked by downstream contamination. Reassessment required.',
     };
 
-    const rejectRes = await fetch(`${API_BASE}/command/recommendations/${rejectPlanId}/action`, {
+    const rejectRes: any = await fetch(`${API_BASE}/command/recommendations/${rejectPlanId}/action`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(rejectPayload),
@@ -236,7 +236,7 @@ async function runTests() {
     console.log('✅ DB ai_recommendations persisted: status = REJECTED, execution_status = CANCELLED');
 
     // Verify rejected plan is NOT in pending list
-    const postRejectPending = await fetch(`${API_BASE}/approvals/pending`).then((r) => r.json());
+    const postRejectPending: any = await fetch(`${API_BASE}/approvals/pending`).then((r) => r.json());
     if (postRejectPending.data?.some((p: any) => p.plan_id === rejectPlanId)) {
       throw new Error('Test D Failed: Rejected plan still appearing in pending list');
     }
@@ -251,7 +251,7 @@ async function runTests() {
     const preDispatchCount = parseInt(preCount.rows[0]?.count || '0', 10);
 
     // Call APPROVE a second time on the already approved plan
-    const duplicateActionRes = await fetch(`${API_BASE}/command/recommendations/${planId}/action`, {
+    const duplicateActionRes: any = await fetch(`${API_BASE}/command/recommendations/${planId}/action`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(approvePayload),
@@ -269,7 +269,7 @@ async function runTests() {
     console.log(`✅ Idempotency verified: Dispatch count unchanged (${postDispatchCount} === ${preDispatchCount})`);
 
     // Verify that attempting to APPROVE a REJECTED plan is safely blocked
-    const illegalApproveOnReject = await fetch(`${API_BASE}/command/recommendations/${rejectPlanId}/action`, {
+    const illegalApproveOnReject: any = await fetch(`${API_BASE}/command/recommendations/${rejectPlanId}/action`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'APPROVE', approvedBy: 'Director Sarah Chen' }),
@@ -301,7 +301,7 @@ async function runTests() {
     console.log(`[Setup] Generated new pending plan: ${pendingPlanId3}`);
 
     // Query pending approvals
-    const multiTestRes = await fetch(`${API_BASE}/approvals/pending`).then((r) => r.json());
+    const multiTestRes: any = await fetch(`${API_BASE}/approvals/pending`).then((r) => r.json());
     const returnedPlans = multiTestRes.data || [];
 
     const containsApproved = returnedPlans.some((p: any) => p.plan_id === planId);
