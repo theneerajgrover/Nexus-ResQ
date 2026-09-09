@@ -57,7 +57,6 @@ function MissionSection({
   isGpsSharing,
   onToggleGps,
   currentCoords,
-  onSimulateMove,
 }: {
   status: MissionState;
   mission: any;
@@ -66,7 +65,6 @@ function MissionSection({
   isGpsSharing: boolean;
   onToggleGps: () => void;
   currentCoords: { lat: number; lng: number; accuracy?: number } | null;
-  onSimulateMove: () => void;
 }) {
   const color = stateColors[status];
   const idx = stateFlow.indexOf(status);
@@ -100,14 +98,14 @@ function MissionSection({
           <div className="font-mono text-xs tracking-widest" style={{ color }}>ACTIVE MISSION</div>
           <span className="font-mono text-[10px] text-white/40">INCIDENT ID</span>
         </div>
-        <div className="font-condensed font-black text-2xl text-white mb-0.5">{mission?.incidentId || mission?.id || 'INC-2849'}</div>
+        <div className="font-condensed font-black text-2xl text-white mb-0.5">{mission?.incidentId || mission?.id || 'Awaiting Incident'}</div>
         <div className="font-condensed font-bold text-lg mb-1" style={{ color }}>{mission?.title || 'EMERGENCY OPERATION'}</div>
-        <div className="font-mono text-xs text-white/40 mb-4">{mission?.location || 'Bridge Sector 7 · Operational Zone'}</div>
+        <div className="font-mono text-xs text-white/40 mb-4">{mission?.destinationAddress || mission?.location || 'Operational Zone'}</div>
 
         <div className="grid grid-cols-2 gap-2 mb-4">
           {[
             { label: 'PRIORITY', value: mission?.priority || 'P1 — CRITICAL', color: '#dc2626' },
-            { label: 'ETA TO SCENE', value: activeRoute?.etaFormatted || (status === 'ARRIVED' ? 'ON SCENE' : '~6 min'), color },
+            { label: 'ETA TO SCENE', value: activeRoute?.etaFormatted || (status === 'ARRIVED' ? 'ON SCENE' : 'ETA pending route'), color },
             { label: 'UNIT / TEAM', value: mission?.callsign || mission?.responderName || 'ALPHA-14', color: '#10b981' },
             { label: 'ROUTE SAFETY', value: activeRoute?.safetyStatus || 'SAFE', color: activeRoute?.safetyStatus === 'CAUTION' ? '#f59e0b' : '#10b981' },
           ].map((item) => (
@@ -143,15 +141,6 @@ function MissionSection({
             <span>
               {currentCoords ? `${currentCoords.lat.toFixed(4)}°N, ${currentCoords.lng.toFixed(4)}°E` : 'Awaiting GPS lock...'}
             </span>
-            {isGpsSharing && (
-              <button
-                onClick={onSimulateMove}
-                title="Advance vehicle along tactical route towards destination"
-                className="text-cyan-400 hover:text-cyan-300 underline cursor-pointer text-[10px]"
-              >
-                Simulate Transit Step →
-              </button>
-            )}
           </div>
         </div>
 
@@ -186,29 +175,64 @@ function MissionSection({
 }
 
 // ── Incident section ──────────────────────────────────────────────────────────
-function IncidentSection({ mission }: { mission: any }) {
+function IncidentSection({
+  mission,
+  trackingBundle,
+  destLat,
+  destLng,
+}: {
+  mission: any;
+  trackingBundle?: any;
+  destLat?: number | null;
+  destLng?: number | null;
+}) {
+  const incidentId = mission?.incidentId || mission?.id || 'Pending Incident';
+  const requestId = mission?.requestId || trackingBundle?.citizen?.requestId || 'Not Linked';
+  const address =
+    mission?.destinationAddress ||
+    trackingBundle?.citizen?.location ||
+    trackingBundle?.incident?.location ||
+    mission?.location ||
+    'Address Pending';
+  const coordsFormatted =
+    destLat !== null && destLat !== undefined && destLng !== null && destLng !== undefined
+      ? `${destLat.toFixed(5)}°, ${destLng.toFixed(5)}°`
+      : 'Coordinates unavailable';
+
   return (
     <div className="space-y-4 h-full overflow-y-auto">
       <div className="font-condensed font-black text-xl text-white">INCIDENT DETAILS</div>
       {[
-        { label: 'INCIDENT ID', value: mission?.incidentId || mission?.id || 'INC-2849' },
+        { label: 'INCIDENT ID', value: incidentId },
+        { label: 'SOS REQUEST ID', value: requestId },
         { label: 'TITLE', value: mission?.title || 'Operational Emergency Response' },
         { label: 'SEVERITY', value: mission?.priority || 'CRITICAL', color: '#dc2626' },
         { label: 'STATUS', value: mission?.status || 'ASSIGNED', color: '#10b981' },
-        { label: 'LOCATION', value: mission?.location || 'Bridge Sector 7' },
-        { label: 'CASUALTIES', value: mission?.casualtiesReported !== undefined ? `${mission.casualtiesReported} reported` : '3 trapped' },
+        { label: 'DESTINATION GPS', value: coordsFormatted, color: '#38bdf8' },
+        { label: 'LOCATION ADDRESS', value: address },
+        {
+          label: 'CASUALTIES',
+          value: mission?.casualtiesReported !== undefined ? `${mission.casualtiesReported} reported` : 'None reported',
+        },
       ].map((item) => (
         <div key={item.label} className="flex items-start justify-between py-2.5 border-b border-white/[0.05]">
           <div className="font-mono text-xs text-white/35">{item.label}</div>
-          <div className="font-condensed font-semibold text-sm text-right" style={{ color: item.color || 'rgba(232,237,242,0.9)' }}>
+          <div
+            className="font-condensed font-semibold text-sm text-right"
+            style={{ color: item.color || 'rgba(232,237,242,0.9)' }}
+          >
             {item.value}
           </div>
         </div>
       ))}
       <div>
         <div className="font-mono text-xs text-white/35 mb-2">OPERATIONAL BRIEF</div>
-        <div className="p-3 rounded-lg font-mono text-xs text-white/55 leading-relaxed" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
-          {mission?.notes || 'Structural hazards and secondary risk active in sector. Maintain tactical distance and report physical contact immediately upon arrival.'}
+        <div
+          className="p-3 rounded-lg font-mono text-xs text-white/55 leading-relaxed"
+          style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}
+        >
+          {mission?.notes ||
+            'Structural hazards and secondary risk active in sector. Maintain tactical distance and report physical contact immediately upon arrival.'}
         </div>
       </div>
     </div>
@@ -217,43 +241,49 @@ function IncidentSection({ mission }: { mission: any }) {
 
 // ── Navigation section ────────────────────────────────────────────────────────
 function NavigationSection({ activeRoute }: { activeRoute: any }) {
-  const steps = activeRoute?.steps || [
-    { instruction: 'Depart station and merge onto tactical highway', distanceMeters: 400, durationSeconds: 60 },
-    { instruction: 'Proceed via primary arterial corridor', distanceMeters: 1800, durationSeconds: 240 },
-    { instruction: 'Arrive at destination incident perimeter', distanceMeters: 200, durationSeconds: 40 },
-  ];
+  const steps = activeRoute?.steps || [];
 
   return (
     <div className="space-y-4 h-full overflow-y-auto">
       <div className="font-condensed font-black text-xl text-white">TACTICAL NAVIGATION</div>
-      <div className="p-4 rounded-xl" style={{ background: 'rgba(16,185,129,0.06)', border: '1px solid rgba(16,185,129,0.25)' }}>
-        <div className="font-mono text-xs text-green-400 mb-2 tracking-widest">
-          {activeRoute?.safetyStatus ? `ACTIVE ROUTE (${activeRoute.safetyStatus})` : 'RECOMMENDED ROUTE'}
-        </div>
-        <div className="font-condensed font-bold text-base text-white mb-1">
-          {activeRoute?.label || 'Direct Primary Arterial Corridor'}
-        </div>
-        <div className="font-mono text-xs text-white/40 mb-4">
-          {activeRoute?.distanceFormatted || '2.4 km'} · ETA {activeRoute?.etaFormatted || '6 min'}
-        </div>
-        <div className="space-y-2">
-          {steps.map((s: any, idx: number) => (
-            <div key={idx} className="flex items-start gap-3 p-2 rounded bg-white/[0.02]">
-              <div className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 font-mono text-[10px] flex items-center justify-center font-bold shrink-0">
-                {idx + 1}
+      {activeRoute ? (
+        <div className="p-4 rounded-xl" style={{ background: 'rgba(16,185,129,0.06)', border: '1px solid rgba(16,185,129,0.25)' }}>
+          <div className="font-mono text-xs text-green-400 mb-2 tracking-widest">
+            {activeRoute?.safetyStatus ? `ACTIVE ROUTE (${activeRoute.safetyStatus})` : 'RECOMMENDED ROUTE'}
+          </div>
+          <div className="font-condensed font-bold text-base text-white mb-1">
+            {activeRoute?.label || 'Corridor Navigation'}
+          </div>
+          <div className="font-mono text-xs text-white/40 mb-4">
+            {activeRoute?.distanceFormatted} · ETA {activeRoute?.etaFormatted}
+          </div>
+          <div className="space-y-2">
+            {steps.map((s: any, idx: number) => (
+              <div key={idx} className="flex items-start gap-3 p-2 rounded bg-white/[0.02]">
+                <div className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 font-mono text-[10px] flex items-center justify-center font-bold shrink-0">
+                  {idx + 1}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="font-mono text-xs text-white/80">{s.instruction}</div>
+                  {s.distanceMeters !== undefined && (
+                    <div className="font-mono text-[10px] text-white/30">
+                      {s.distanceMeters < 1000 ? `${Math.round(s.distanceMeters)}m` : `${(s.distanceMeters / 1000).toFixed(1)}km`}
+                    </div>
+                  )}
+                </div>
               </div>
-              <div className="flex-1 min-w-0">
-                <div className="font-mono text-xs text-white/80">{s.instruction}</div>
-                {s.distanceMeters && (
-                  <div className="font-mono text-[10px] text-white/30">
-                    {s.distanceMeters < 1000 ? `${Math.round(s.distanceMeters)}m` : `${(s.distanceMeters / 1000).toFixed(1)}km`}
-                  </div>
-                )}
-              </div>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
-      </div>
+      ) : (
+        <div className="p-6 rounded-xl border border-white/10 text-center" style={{ background: 'rgba(255,255,255,0.02)' }}>
+          <div className="text-2xl mb-2">📡</div>
+          <div className="font-mono text-xs text-white/60 mb-1">NAVIGATION PENDING</div>
+          <div className="font-mono text-[11px] text-white/30">
+            Route calculation will appear once operational GPS lock and incident destination are verified.
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -335,13 +365,10 @@ export default function ResponderHome() {
   const [status, setStatus] = useState<MissionState>('ASSIGNED');
   const [mission, setMission] = useState<any>(null);
   const [activeRoute, setActiveRoute] = useState<any>(null);
+  const [trackingBundle, setTrackingBundle] = useState<any>(null);
   const [isGpsSharing, setIsGpsSharing] = useState(false);
-  const [currentCoords, setCurrentCoords] = useState<{ lat: number; lng: number; accuracy?: number } | null>({
-    lat: 28.6280,
-    lng: 77.2180,
-  });
+  const [currentCoords, setCurrentCoords] = useState<{ lat: number; lng: number; accuracy?: number } | null>(null);
   const [routeAlert, setRouteAlert] = useState<{ show: boolean; message: string } | null>(null);
-  const [simStepIndex, setSimStepIndex] = useState(0);
 
   const section = useSectionFromUrl();
   const watchIdRef = useRef<number | null>(null);
@@ -350,8 +377,10 @@ export default function ResponderHome() {
   const loadMissionData = async () => {
     try {
       const res = await respondersApi.getAssignedMission();
-      if (res.data?.data || res.data) {
-        const m = res.data.data || res.data;
+      // apiClient returns the JSON body directly (not wrapped in res.data)
+      if (res?.data || res?.success) {
+        const m = res.data || (res.success ? res : null);
+        if (!m) return;
         setMission(m);
 
         if (m.status) {
@@ -361,11 +390,40 @@ export default function ResponderHome() {
           }
         }
 
-        // Query active tactical route for this incident
+        // Initialize responder coords from database if available and not yet set
+        if (m.responderLat && m.responderLng) {
+          const rLat = parseFloat(m.responderLat);
+          const rLng = parseFloat(m.responderLng);
+          if (!isNaN(rLat) && !isNaN(rLng)) {
+            setCurrentCoords((prev) => prev || {
+              lat: rLat,
+              lng: rLng,
+              accuracy: m.responderAccuracy ? parseFloat(m.responderAccuracy) : 15,
+            });
+          }
+        }
+
+        // Query tracking bundle — provides REAL incident destination from the DB
         if (m.incidentId) {
           const trackRes = await trackingApi.getTracking(m.incidentId);
-          if (trackRes.data?.data?.activeRoute) {
-            setActiveRoute(trackRes.data.data.activeRoute);
+          // apiClient returns JSON body directly, no extra nesting
+          if (trackRes?.success && trackRes?.data) {
+            const bundle = trackRes.data;
+            setTrackingBundle(bundle);
+            if (bundle.activeRoute) {
+              setActiveRoute(bundle.activeRoute);
+            }
+            if (bundle.responder?.latitude && bundle.responder?.longitude) {
+              const bLat = parseFloat(bundle.responder.latitude);
+              const bLng = parseFloat(bundle.responder.longitude);
+              if (!isNaN(bLat) && !isNaN(bLng)) {
+                setCurrentCoords((prev) => prev || {
+                  lat: bLat,
+                  lng: bLng,
+                  accuracy: bundle.responder.accuracy || 15,
+                });
+              }
+            }
           }
         }
       }
@@ -471,28 +529,6 @@ export default function ResponderHome() {
     }
   };
 
-  // Simulate vehicle movement along route (for testing when laptop is stationary)
-  const handleSimulateMove = () => {
-    const coords = activeRoute?.coordinates;
-    if (!coords || coords.length === 0) return;
-
-    const nextIdx = (simStepIndex + 1) % coords.length;
-    setSimStepIndex(nextIdx);
-
-    const [lat, lng] = coords[nextIdx];
-    setCurrentCoords({ lat, lng, accuracy: 5.0 });
-
-    trackingApi.sendLocation({
-      entityType: 'responder',
-      entityId: mission?.responderId || 'R-14',
-      incidentId: mission?.incidentId,
-      latitude: lat,
-      longitude: lng,
-      accuracy: 5.0,
-      heading: 90,
-      speed: 45,
-    }).catch(() => {});
-  };
 
   // Handle Operational Lifecycle Transition
   const handleStatusChange = async (nextStatus: MissionState) => {
@@ -524,18 +560,42 @@ export default function ResponderHome() {
     });
   }
 
-  const destLat = mission?.lat || (activeRoute?.coordinates?.length ? activeRoute.coordinates[activeRoute.coordinates.length - 1][0] : 28.6139);
-  const destLng = mission?.lng || (activeRoute?.coordinates?.length ? activeRoute.coordinates[activeRoute.coordinates.length - 1][1] : 77.2090);
+  // ── Destination: prefer real incident coordinates from tracking bundle ────
+  // Priority order:
+  //   1. Citizen GPS coordinates (most accurate — exact SOS submission point)
+  //   2. Incident coordinates stored in DB
+  //   3. Last coordinate in the active route polyline (end of route = destination)
+  //   4. null — never use hardcoded fallback coordinates
+  const incidentDestLat: number | null =
+    (trackingBundle?.citizen?.latitude) ||
+    (trackingBundle?.incident?.latitude) ||
+    (mission?.incidentLat ? parseFloat(mission.incidentLat) : null) ||
+    (mission?.lat ? parseFloat(mission.lat) : null) ||
+    (activeRoute?.coordinates?.length
+      ? activeRoute.coordinates[activeRoute.coordinates.length - 1][0]
+      : null);
 
-  mapMarkers.push({
-    id: 'destination-incident',
-    type: 'incident',
-    title: mission?.title || 'Emergency Destination',
-    lat: destLat,
-    lng: destLng,
-    details: mission?.location || 'Incident Perimeter',
-    severity: mission?.priority || 'CRITICAL',
-  });
+  const incidentDestLng: number | null =
+    (trackingBundle?.citizen?.longitude) ||
+    (trackingBundle?.incident?.longitude) ||
+    (mission?.incidentLng ? parseFloat(mission.incidentLng) : null) ||
+    (mission?.lng ? parseFloat(mission.lng) : null) ||
+    (activeRoute?.coordinates?.length
+      ? activeRoute.coordinates[activeRoute.coordinates.length - 1][1]
+      : null);
+
+  // Only add the destination marker if we have REAL coordinates from the database
+  if (incidentDestLat !== null && incidentDestLng !== null) {
+    mapMarkers.push({
+      id: 'destination-incident',
+      type: 'incident',
+      title: mission?.title || 'Emergency Destination',
+      lat: incidentDestLat,
+      lng: incidentDestLng,
+      details: trackingBundle?.citizen?.location || trackingBundle?.incident?.location || mission?.location || 'Incident Location',
+      severity: mission?.priority || 'CRITICAL',
+    });
+  }
 
   const color = stateColors[status];
 
@@ -614,10 +674,16 @@ export default function ResponderHome() {
                       isGpsSharing={isGpsSharing}
                       onToggleGps={toggleGpsSharing}
                       currentCoords={currentCoords}
-                      onSimulateMove={handleSimulateMove}
                     />
                   )}
-                  {section === 'incident' && <IncidentSection mission={mission} />}
+                  {section === 'incident' && (
+                    <IncidentSection
+                      mission={mission}
+                      trackingBundle={trackingBundle}
+                      destLat={incidentDestLat}
+                      destLng={incidentDestLng}
+                    />
+                  )}
                   {section === 'navigation' && <NavigationSection activeRoute={activeRoute} />}
                   {section === 'resources' && <ResourcesSection />}
                   {section === 'alerts' && <AlertsSection routeAlert={routeAlert} />}
@@ -629,7 +695,7 @@ export default function ResponderHome() {
           {/* Interactive Map View */}
           <div className="flex-1 relative">
             <OperationalMap
-              center={currentCoords || { lat: destLat, lng: destLng }}
+              center={currentCoords || (incidentDestLat !== null && incidentDestLng !== null ? { lat: incidentDestLat, lng: incidentDestLng } : undefined)}
               zoom={14}
               markers={mapMarkers}
               activeRouteCoordinates={activeRoute?.coordinates}
