@@ -206,73 +206,138 @@ weatherRouter.get('/search', async (req: Request, res: Response): Promise<void> 
   }
 });
 
-// GET /api/location/reverse-geocode?lat=...&lon=...
-locationRouter.get('/reverse-geocode', async (req: Request, res: Response): Promise<void> => {
+import { locationService } from '../services/locationService';
+
+// Handler for reverse geocoding (supports both GET and POST)
+async function handleReverseGeocode(req: Request, res: Response): Promise<void> {
   try {
-    const latStr = req.query.lat as string;
-    const lonStr = req.query.lon as string;
+    const latRaw = req.method === 'POST' ? req.body.latitude ?? req.body.lat : req.query.lat ?? req.query.latitude;
+    const lonRaw = req.method === 'POST' ? req.body.longitude ?? req.body.lon ?? req.body.lng : req.query.lon ?? req.query.longitude ?? req.query.lng;
+    const accRaw = req.method === 'POST' ? req.body.accuracy ?? req.body.accuracy_meters : req.query.accuracy ?? req.query.accuracy_meters;
 
-    const lat = parseFloat(latStr);
-    const lon = parseFloat(lonStr);
+    const lat = typeof latRaw === 'number' ? latRaw : parseFloat(latRaw as string);
+    const lon = typeof lonRaw === 'number' ? lonRaw : parseFloat(lonRaw as string);
+    const accuracy = accRaw !== undefined && accRaw !== null ? (typeof accRaw === 'number' ? accRaw : parseFloat(accRaw as string)) : null;
 
-    if (isNaN(lat) || isNaN(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+    const validation = locationService.validateCoordinates(lat, lon, accuracy);
+    if (!validation.valid) {
       res.status(400).json({
         success: false,
-        error: 'Valid latitude (-90 to 90) and longitude (-180 to 180) coordinates are required.',
+        error: validation.error,
       });
       return;
     }
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 6000);
-
-    const nominatimUrl = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=18&addressdetails=1`;
-
-    const apiRes = await fetch(nominatimUrl, {
-      headers: {
-        'User-Agent': 'NexusResQ-EmergencyPlatform/1.0 (emergency-response-system)',
-        'Accept': 'application/json',
-      },
-      signal: controller.signal,
-    });
-    clearTimeout(timeout);
-
-    if (!apiRes.ok) {
-      throw new Error(`Nominatim returned status ${apiRes.status}`);
+    const result = await locationService.reverseGeocode(lat, lon, accuracy);
+    if (!result.success || !result.data) {
+      res.status(503).json({
+        success: false,
+        error: result.error || 'Location geocoding service temporarily unavailable.',
+      });
+      return;
     }
 
-    const json = (await apiRes.json()) as any;
-    const addr = json.address || {};
-
-    const street = addr.road || addr.street || addr.neighbourhood || addr.suburb || '';
-    const city = addr.city || addr.town || addr.village || addr.county || '';
-    const state = addr.state || '';
-    const country = addr.country || '';
-    const postcode = addr.postcode || '';
-
-    const parts = [street, city, state, country].filter(Boolean);
-    const formattedAddress = parts.length > 0 ? parts.join(', ') : json.display_name || `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
-
+    // Return structured response with both new specification and backward-compatible fields
     res.json({
       success: true,
       data: {
-        latitude: lat,
-        longitude: lon,
-        formattedAddress,
-        street,
-        city,
-        state,
-        country,
-        postcode,
-        rawDisplayName: json.display_name,
+        ...result.data,
+        formattedAddress: result.data.formatted_address,
+        city: result.data.city || result.data.locality,
+        state: result.data.state,
+        country: result.data.country,
+        postcode: result.data.postal_code,
       },
     });
   } catch (err: any) {
     console.warn('[Location API Warning]: Failed to reverse geocode:', err.message);
-    res.status(503).json({
+    res.status(500).json({
       success: false,
-      error: 'Location geocoding service temporarily unavailable.',
+      error: 'Failed to process location reverse geocode.',
       details: err.message,
     });
   }
+}
+
+// GET /api/location/reverse-geocode
+locationRouter.get('/reverse-geocode', handleReverseGeocode);
+
+// POST /api/location/reverse-geocode
+locationRouter.post('/reverse-geocode', handleReverseGeocode);
+
+// GET /api/location/autocomplete?input=...
+locationRouter.get('/autocomplete', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const input = (req.query.input || req.query.query || req.query.q || '') as string;
+    const result = await locationService.autocompletePlaces(input);
+    res.json(result);
+  } catch (err: any) {
+    console.warn('[Location Autocomplete Error]:', err.message);
+    res.status(500).json({ success: false, error: 'Failed to search places.', data: [] });
+  }
 });
+
+// POST /api/location/place-details
+locationRouter.post('/place-details', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const placeId = (req.body.placeId || req.body.place_id || req.query.place_id || '') as string;
+    if (!placeId) {
+      res.status(400).json({ success: false, error: 'Place ID is required.' });
+      return;
+    }
+
+    const result = await locationService.getPlaceDetails(placeId);
+    if (!result.success || !result.data) {
+      res.status(404).json({ success: false, error: result.error || 'Place not found.' });
+      return;
+    }
+
+    res.json({
+      success: true,
+      data: {
+        ...result.data,
+        formattedAddress: result.data.formatted_address,
+      },
+    });
+  } catch (err: any) {
+    console.warn('[Location Place Details Error]:', err.message);
+    res.status(500).json({ success: false, error: 'Failed to resolve place details.' });
+  }
+});
+
+// POST /api/location/validate
+locationRouter.post('/validate', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const address = (req.body.address || req.body.location || req.body.location_name || '') as string;
+    if (!address || address.trim().length < 3) {
+      res.status(400).json({
+        success: false,
+        error: 'Address must be at least 3 characters long.',
+      });
+      return;
+    }
+
+    const result = await locationService.validateAddress(address);
+    if (!result.success || !result.data) {
+      res.status(422).json({
+        success: false,
+        verified: false,
+        error: result.error || 'Location could not be verified. Please select a valid address.',
+      });
+      return;
+    }
+
+    res.json({
+      success: true,
+      verified: result.data.verified,
+      data: {
+        ...result.data,
+        formattedAddress: result.data.formatted_address,
+      },
+    });
+  } catch (err: any) {
+    console.warn('[Location Validation Error]:', err.message);
+    res.status(500).json({ success: false, error: 'Failed to validate address.' });
+  }
+});
+

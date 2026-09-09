@@ -64,10 +64,39 @@ emergencyRouter.post('/request', optionalAuth, async (req: Request, res: Respons
     // 3. Server-side IP Address Capture (audit/traceability, not exact physical tracking)
     const clientIp = extractClientIp(req);
 
-    // 4. Coordinates extraction (use actual coordinates if valid numbers, else null — no hardcoded dummy coordinates)
-    const validLat = typeof latitude === 'number' && !isNaN(latitude) ? latitude : null;
-    const validLon = typeof longitude === 'number' && !isNaN(longitude) ? longitude : null;
-    const validAccuracy = typeof accuracy === 'number' && !isNaN(accuracy) ? accuracy : null;
+    // 4. Coordinates & Location Metadata extraction
+    const rawLat = latitude ?? req.body.lat;
+    const rawLon = longitude ?? req.body.lon ?? req.body.lng;
+    const rawAcc = accuracy ?? req.body.accuracy_meters;
+
+    const validLat = typeof rawLat === 'number' && !isNaN(rawLat) && rawLat >= -90 && rawLat <= 90 ? rawLat : null;
+    const validLon = typeof rawLon === 'number' && !isNaN(rawLon) && rawLon >= -180 && rawLon <= 180 ? rawLon : null;
+    const validAccuracy = typeof rawAcc === 'number' && !isNaN(rawAcc) && rawAcc >= 0 ? rawAcc : null;
+
+    // Device vs Incident Location separation
+    const devLat = typeof req.body.device_latitude === 'number' && !isNaN(req.body.device_latitude) ? req.body.device_latitude : validLat;
+    const devLon = typeof req.body.device_longitude === 'number' && !isNaN(req.body.device_longitude) ? req.body.device_longitude : validLon;
+    const devAcc = typeof req.body.device_accuracy_meters === 'number' && !isNaN(req.body.device_accuracy_meters) ? req.body.device_accuracy_meters : validAccuracy;
+    const devTime = req.body.device_location_timestamp ? new Date(req.body.device_location_timestamp) : (devLat !== null ? new Date() : null);
+
+    const incLat = typeof req.body.incident_latitude === 'number' && !isNaN(req.body.incident_latitude) ? req.body.incident_latitude : validLat;
+    const incLon = typeof req.body.incident_longitude === 'number' && !isNaN(req.body.incident_longitude) ? req.body.incident_longitude : validLon;
+    const incAcc = typeof req.body.incident_accuracy_meters === 'number' && !isNaN(req.body.incident_accuracy_meters) ? req.body.incident_accuracy_meters : validAccuracy;
+
+    // Administrative and verification metadata
+    const placeId = (req.body.place_id || req.body.placeId || null) as string | null;
+    const formattedAddress = (req.body.formatted_address || req.body.formattedAddress || effectiveLocation) as string;
+    const village = (req.body.village || null) as string | null;
+    const locality = (req.body.locality || null) as string | null;
+    const city = (req.body.city || null) as string | null;
+    const district = (req.body.district || null) as string | null;
+    const state = (req.body.state || null) as string | null;
+    const postalCode = (req.body.postal_code || req.body.postcode || null) as string | null;
+    const country = (req.body.country || null) as string | null;
+    const locationSource = (req.body.location_source || (validLat !== null ? 'gps' : 'manual')) as string;
+    const locationVerified = Boolean(req.body.location_verified || req.body.verified);
+    const locationConfidence = typeof req.body.location_confidence === 'number' ? req.body.location_confidence : (locationVerified ? 95.0 : 70.0);
+    const resolvedAt = req.body.location_resolved_at ? new Date(req.body.location_resolved_at) : new Date();
 
     const effectiveName = (name || contact_name || '').trim() || (req.user?.name || 'Anonymous Citizen');
     const effectivePhone = (phone || contact_phone || '').trim() || null;
@@ -78,13 +107,25 @@ emergencyRouter.post('/request', optionalAuth, async (req: Request, res: Respons
     const sosId = `SOS-${Math.floor(10000 + Math.random() * 90000)}`;
     const incId = `INC-${Date.now().toString().slice(-4)}`;
 
-    // 5. Insert into PostgreSQL emergency_requests table with 8-step lifecycle starting status 'REQUESTED'
+    // 5. Insert into PostgreSQL emergency_requests table with full location persistence
     const insertRes = await query(
       `INSERT INTO emergency_requests (
         id, user_id, emergency_type, assistance_types, assistance_requested, location, latitude, longitude,
         accuracy, details, contact_name, requester_name, contact_phone, phone_number, requester_ip, source,
-        status, incident_id, created_at, updated_at
-      ) VALUES ($1, $2, $3, $4, $4, $5, $6, $7, $8, $9, $10, $10, $11, $11, $12, 'WEB_EMERGENCY', 'REQUESTED', $13, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        status, incident_id, created_at, updated_at,
+        device_latitude, device_longitude, device_accuracy_meters, device_location_timestamp,
+        incident_latitude, incident_longitude, incident_accuracy_meters,
+        formatted_address, place_id, village, locality, city, district, state, postal_code, country,
+        location_source, location_verified, location_confidence, location_resolved_at
+      ) VALUES (
+        $1, $2, $3, $4, $4, $5, $6, $7,
+        $8, $9, $10, $10, $11, $11, $12, 'WEB_EMERGENCY',
+        'REQUESTED', $13, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
+        $14, $15, $16, $17,
+        $18, $19, $20,
+        $21, $22, $23, $24, $25, $26, $27, $28, $29,
+        $30, $31, $32, $33
+      )
       RETURNING *`,
       [
         sosId,
@@ -92,38 +133,79 @@ emergencyRouter.post('/request', optionalAuth, async (req: Request, res: Respons
         effectiveType,
         assistanceArray,
         effectiveLocation,
-        validLat,
-        validLon,
-        validAccuracy,
+        incLat ?? validLat,
+        incLon ?? validLon,
+        incAcc ?? validAccuracy,
         effectiveDetails,
         effectiveName,
         effectivePhone,
         clientIp,
         incId,
+        devLat,
+        devLon,
+        devAcc,
+        devTime,
+        incLat,
+        incLon,
+        incAcc,
+        formattedAddress,
+        placeId,
+        village,
+        locality,
+        city,
+        district,
+        state,
+        postalCode,
+        country,
+        locationSource,
+        locationVerified,
+        locationConfidence,
+        resolvedAt,
       ]
     );
 
     const savedRequest = insertRes.rows[0];
 
-    // 6. Spawn active incident in Command / Operations feed
+    // 6. Spawn active incident in Command feed with location & coordinates
     const incidentType = ['STRUCTURAL', 'FLOOD', 'MEDICAL', 'FIRE', 'EVACUATION'].includes(effectiveType)
       ? effectiveType
       : 'OTHER';
 
+    const incidentLat = incLat ?? (validLat ?? 0);
+    const incidentLon = incLon ?? (validLon ?? 0);
+
     await query(
-      `INSERT INTO incidents (id, title, type, severity, location, latitude, longitude, status, responders_count, pending, request_id)
-       VALUES ($1, $2, $3, 'HIGH', $4, $5, $6, 'REQUESTED', 0, TRUE, $7)
-       ON CONFLICT (id) DO UPDATE SET request_id = $7`,
+      `INSERT INTO incidents (
+        id, title, type, severity, location, latitude, longitude, status, responders_count, pending, request_id,
+        place_id, formatted_address, village, locality, city, district, state, postal_code, country, location_source, location_verified
+      )
+      VALUES ($1, $2, $3, 'HIGH', $4, $5, $6, 'REQUESTED', 0, TRUE, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+      ON CONFLICT (id) DO UPDATE SET 
+        request_id = $7,
+        latitude = EXCLUDED.latitude,
+        longitude = EXCLUDED.longitude,
+        location = EXCLUDED.location`,
       [
         incId,
         `Citizen SOS: ${effectiveType} (${assistanceArray.join(', ')})`,
         incidentType,
         effectiveLocation,
-        validLat !== null ? validLat : 0,
-        validLon !== null ? validLon : 0,
+        incidentLat,
+        incidentLon,
         sosId,
+        placeId,
+        formattedAddress,
+        village,
+        locality,
+        city,
+        district,
+        state,
+        postalCode,
+        country,
+        locationSource,
+        locationVerified,
       ]
-    ).catch(() => {});
+    ).catch((err: any) => console.warn('[Emergency] Incident insert notice:', err.message));
 
     // 7. Initial Entry in incident_status_history
     await query(
@@ -134,7 +216,7 @@ emergencyRouter.post('/request', optionalAuth, async (req: Request, res: Respons
         sosId,
         incId,
         effectiveName,
-        `Citizen emergency registered at ${effectiveLocation} with device geolocation.`,
+        `Citizen emergency registered at ${effectiveLocation} (Verified: ${locationVerified ? 'YES' : 'PENDING_CONFIRMATION'}).`,
       ]
     ).catch(() => {});
 
@@ -207,12 +289,26 @@ emergencyRouter.post('/request', optionalAuth, async (req: Request, res: Respons
         requestId: savedRequest.id,
         status: savedRequest.status,
         location: savedRequest.location,
+        formattedAddress: savedRequest.formatted_address || savedRequest.location,
         latitude: savedRequest.latitude ? parseFloat(savedRequest.latitude) : null,
         longitude: savedRequest.longitude ? parseFloat(savedRequest.longitude) : null,
         accuracy: savedRequest.accuracy ? parseFloat(savedRequest.accuracy) : null,
+        deviceLatitude: savedRequest.device_latitude ? parseFloat(savedRequest.device_latitude) : null,
+        deviceLongitude: savedRequest.device_longitude ? parseFloat(savedRequest.device_longitude) : null,
+        incidentLatitude: savedRequest.incident_latitude ? parseFloat(savedRequest.incident_latitude) : null,
+        incidentLongitude: savedRequest.incident_longitude ? parseFloat(savedRequest.incident_longitude) : null,
+        placeId: savedRequest.place_id,
+        locality: savedRequest.locality,
+        city: savedRequest.city,
+        district: savedRequest.district,
+        state: savedRequest.state,
+        postalCode: savedRequest.postal_code,
+        country: savedRequest.country,
+        locationVerified: savedRequest.location_verified,
+        locationSource: savedRequest.location_source,
         assistanceNeeded: savedRequest.assistance_requested,
         assignedIncidentId: incId,
-        hasCoordinates: validLat !== null,
+        hasCoordinates: validLat !== null || incLat !== null,
         timestamp: savedRequest.created_at,
       },
     });
