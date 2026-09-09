@@ -105,7 +105,7 @@ emergencyRouter.post('/request', optionalAuth, async (req: Request, res: Respons
     const userId = req.user?.id || null;
 
     const sosId = `SOS-${Math.floor(10000 + Math.random() * 90000)}`;
-    const incId = `INC-${Date.now().toString().slice(-4)}`;
+    const incId = `INC-${Math.floor(10000 + Math.random() * 90000)}`;
 
     // 5. Insert into PostgreSQL emergency_requests table with full location persistence
     const insertRes = await query(
@@ -287,6 +287,8 @@ emergencyRouter.post('/request', optionalAuth, async (req: Request, res: Respons
       data: {
         id: savedRequest.id,
         requestId: savedRequest.id,
+        incidentId: incId,
+        incident_id: incId,
         status: savedRequest.status,
         location: savedRequest.location,
         formattedAddress: savedRequest.formatted_address || savedRequest.location,

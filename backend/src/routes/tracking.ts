@@ -470,6 +470,59 @@ export async function fetchTrackingBundle(incidentId: string) {
       updatedAt: r.updated_at,
     };
     alternatives = r.alternatives || [];
+  } else if (
+    incident.latitude !== null &&
+    incident.latitude !== undefined &&
+    incident.longitude !== null &&
+    incident.longitude !== undefined &&
+    incident.responder_lat !== null &&
+    incident.responder_lat !== undefined &&
+    incident.responder_lng !== null &&
+    incident.responder_lng !== undefined
+  ) {
+    const oLat = parseFloat(incident.responder_lat);
+    const oLng = parseFloat(incident.responder_lng);
+    const dLat = parseFloat(incident.latitude);
+    const dLng = parseFloat(incident.longitude);
+
+    if (!isNaN(oLat) && !isNaN(oLng) && !isNaN(dLat) && !isNaN(dLng)) {
+      try {
+        const alts = await computeRouteAlternatives({ lat: oLat, lng: oLng }, { lat: dLat, lng: dLng });
+        const evaluated = await evaluateRouteSafety(alts, { incidentId });
+        if (evaluated.length > 0) {
+          const safest = evaluated[0];
+          await persistActiveRoute(
+            incidentId,
+            incident.request_id || null,
+            incident.responder_id || null,
+            { lat: oLat, lng: oLng },
+            { lat: dLat, lng: dLng },
+            safest,
+            evaluated,
+            'Auto-computed route for assigned responder'
+          ).catch(() => {});
+
+          activeRoute = {
+            id: safest.id,
+            label: safest.label,
+            distanceMeters: safest.distanceMeters,
+            durationSeconds: safest.durationSeconds,
+            distanceFormatted: safest.distanceFormatted,
+            etaFormatted: safest.etaFormatted,
+            polyline: safest.polyline,
+            coordinates: safest.coordinates,
+            steps: safest.steps,
+            safetyStatus: safest.safetyStatus,
+            safetyScore: safest.safetyScore,
+            riskFactors: safest.riskFactors,
+            updatedAt: new Date(),
+          };
+          alternatives = evaluated;
+        }
+      } catch (err: any) {
+        console.warn('[Tracking] Dynamic route computation notice:', err.message);
+      }
+    }
   }
 
   // 4. Query Status History
@@ -515,8 +568,8 @@ export async function fetchTrackingBundle(incidentId: string) {
       type: incident.type,
       severity: incident.severity,
       location: incident.location,
-      latitude: parseFloat(incident.latitude),
-      longitude: parseFloat(incident.longitude),
+      latitude: incident.latitude !== null && incident.latitude !== undefined && !isNaN(parseFloat(incident.latitude)) ? parseFloat(incident.latitude) : null,
+      longitude: incident.longitude !== null && incident.longitude !== undefined && !isNaN(parseFloat(incident.longitude)) ? parseFloat(incident.longitude) : null,
       status: normalizedStatus,
       createdAt: incident.created_at,
     },

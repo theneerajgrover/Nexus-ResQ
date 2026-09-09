@@ -36,27 +36,55 @@ respondersRouter.get('/', async (req: Request, res: Response): Promise<void> => 
 // GET /api/responders/mission
 respondersRouter.get('/mission', async (req: Request, res: Response): Promise<void> => {
   try {
+    const incidentId = req.query.incidentId as string | undefined;
+    const responderId = req.query.responderId as string | undefined;
+
+    let whereClause = '';
+    const params: any[] = [];
+    if (incidentId) {
+      params.push(incidentId);
+      whereClause = `WHERE m.incident_id = $${params.length}`;
+    } else if (responderId) {
+      params.push(responderId);
+      whereClause = `WHERE m.responder_id = $${params.length}`;
+    }
+
     const result = await query(`
       SELECT 
         m.id,
         m.incident_id as "incidentId",
+        COALESCE(i.request_id, eq.id) as "requestId",
         m.title,
-        m.location,
-        m.latitude as lat,
-        m.longitude as lng,
+        COALESCE(i.formatted_address, i.location, eq.formatted_address, eq.location, m.location) as "destinationAddress",
+        COALESCE(i.formatted_address, i.location, eq.formatted_address, eq.location, m.location) as location,
+        COALESCE(i.latitude, eq.latitude, m.latitude) as "destinationLat",
+        COALESCE(i.longitude, eq.longitude, m.longitude) as "destinationLng",
+        COALESCE(i.latitude, eq.latitude, m.latitude) as lat,
+        COALESCE(i.longitude, eq.longitude, m.longitude) as lng,
+        m.status as "dispatchStatus",
         m.status,
+        i.status as "incidentStatus",
         m.priority,
         m.casualties_reported as "casualtiesReported",
         m.hazards,
         m.perimeter,
         m.notes,
+        m.responder_id as "responderId",
         r.name as "responderName",
-        r.callsign
+        r.callsign,
+        r.latitude as "responderLat",
+        r.longitude as "responderLng",
+        r.accuracy as "responderAccuracy",
+        r.heading as "responderHeading",
+        r.speed as "responderSpeed"
       FROM missions m
+      LEFT JOIN incidents i ON m.incident_id = i.id
+      LEFT JOIN emergency_requests eq ON (eq.incident_id = i.id OR eq.id = i.request_id)
       LEFT JOIN responders r ON m.responder_id = r.id
+      ${whereClause}
       ORDER BY m.created_at DESC
       LIMIT 1
-    `);
+    `, params);
 
     if (result.rowCount && result.rowCount > 0) {
       res.json({ success: true, data: result.rows[0] });
@@ -125,11 +153,17 @@ respondersRouter.get('/history', async (req: Request, res: Response): Promise<vo
         SELECT 
           m.id,
           m.incident_id as "incidentId",
+          COALESCE(i.request_id, eq.id) as "requestId",
           m.title,
-          m.location,
-          m.latitude as lat,
-          m.longitude as lng,
+          COALESCE(i.formatted_address, i.location, eq.formatted_address, eq.location, m.location) as "destinationAddress",
+          COALESCE(i.formatted_address, i.location, eq.formatted_address, eq.location, m.location) as location,
+          COALESCE(i.latitude, eq.latitude, m.latitude) as "destinationLat",
+          COALESCE(i.longitude, eq.longitude, m.longitude) as "destinationLng",
+          COALESCE(i.latitude, eq.latitude, m.latitude) as lat,
+          COALESCE(i.longitude, eq.longitude, m.longitude) as lng,
+          m.status as "dispatchStatus",
           m.status,
+          i.status as "incidentStatus",
           m.priority,
           m.casualties_reported as "casualtiesReported",
           m.hazards,
@@ -140,6 +174,8 @@ respondersRouter.get('/history', async (req: Request, res: Response): Promise<vo
           r.name as "responderName",
           r.callsign
         FROM missions m
+        LEFT JOIN incidents i ON m.incident_id = i.id
+        LEFT JOIN emergency_requests eq ON (eq.incident_id = i.id OR eq.id = i.request_id)
         LEFT JOIN responders r ON m.responder_id = r.id
         WHERE m.responder_id = $1
         ORDER BY m.updated_at DESC
@@ -151,11 +187,17 @@ respondersRouter.get('/history', async (req: Request, res: Response): Promise<vo
         SELECT 
           m.id,
           m.incident_id as "incidentId",
+          COALESCE(i.request_id, eq.id) as "requestId",
           m.title,
-          m.location,
-          m.latitude as lat,
-          m.longitude as lng,
+          COALESCE(i.formatted_address, i.location, eq.formatted_address, eq.location, m.location) as "destinationAddress",
+          COALESCE(i.formatted_address, i.location, eq.formatted_address, eq.location, m.location) as location,
+          COALESCE(i.latitude, eq.latitude, m.latitude) as "destinationLat",
+          COALESCE(i.longitude, eq.longitude, m.longitude) as "destinationLng",
+          COALESCE(i.latitude, eq.latitude, m.latitude) as lat,
+          COALESCE(i.longitude, eq.longitude, m.longitude) as lng,
+          m.status as "dispatchStatus",
           m.status,
+          i.status as "incidentStatus",
           m.priority,
           m.casualties_reported as "casualtiesReported",
           m.hazards,
@@ -166,6 +208,8 @@ respondersRouter.get('/history', async (req: Request, res: Response): Promise<vo
           r.name as "responderName",
           r.callsign
         FROM missions m
+        LEFT JOIN incidents i ON m.incident_id = i.id
+        LEFT JOIN emergency_requests eq ON (eq.incident_id = i.id OR eq.id = i.request_id)
         LEFT JOIN responders r ON m.responder_id = r.id
         ORDER BY m.updated_at DESC
         LIMIT 50
