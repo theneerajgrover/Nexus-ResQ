@@ -509,6 +509,7 @@ interface JourneyViewProps {
 function JourneyView({ requestId, incidentId: initialIncidentId, accuracy }: JourneyViewProps) {
   const [trackingData, setTrackingData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [trackingError, setTrackingError] = useState<string | null>(null);
   const [lastSyncTime, setLastSyncTime] = useState<number>(Date.now());
   const [syncedSecondsAgo, setSyncedSecondsAgo] = useState(0);
   const [routeUpdatedAlert, setRouteUpdatedAlert] = useState<{ show: boolean; message: string } | null>(null);
@@ -522,12 +523,31 @@ function JourneyView({ requestId, incidentId: initialIncidentId, accuracy }: Jou
         res = await trackingApi.getTrackingByRequest(requestId);
       }
 
-      if (res.data?.success && res.data?.data) {
-        setTrackingData(res.data.data);
+      // apiClient returns the JSON body directly (not wrapped in res.data)
+      if (res?.success && res?.data) {
+        const bundle = res.data;
+
+        // If both requestId and incidentId are provided, validate they correspond.
+        // The citizen data inside the bundle carries the real requestId from DB.
+        if (initialIncidentId && requestId && bundle.citizen?.requestId) {
+          if (bundle.citizen.requestId !== requestId) {
+            setTrackingError('The request ID and incident ID provided do not correspond to the same emergency record.');
+            setLoading(false);
+            return;
+          }
+        }
+
+        setTrackingData(bundle);
+        setTrackingError(null);
         setLastSyncTime(Date.now());
+      } else {
+        // Not found or controlled error from backend
+        const errMsg = res?.error || `Emergency record not found.`;
+        setTrackingError(errMsg);
       }
     } catch (err: any) {
       console.warn('[JourneyView] Tracking query error:', err.message);
+      setTrackingError('Tracking service temporarily unavailable. Please refresh.');
     } finally {
       setLoading(false);
     }
@@ -632,12 +652,81 @@ function JourneyView({ requestId, incidentId: initialIncidentId, accuracy }: Jou
     };
   }, []);
 
+  // ── Loading state ────────────────────────────────────────────
+  if (loading) {
+    return (
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        className="w-full max-w-lg flex flex-col items-center gap-6 text-center py-16"
+      >
+        <motion.div
+          className="w-16 h-16 rounded-full border-2 border-amber-400/60 border-t-amber-400"
+          animate={{ rotate: 360 }}
+          transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+        />
+        <div className="font-condensed font-black text-2xl text-white">LOADING TRACKING DATA</div>
+        <div className="font-mono text-xs text-white/40">Connecting to emergency response system...</div>
+        <div className="font-mono text-[11px] text-white/25">Request: {requestId}</div>
+      </motion.div>
+    );
+  }
+
+  // ── Error / not-found state ───────────────────────────────────
+  if (trackingError || !trackingData) {
+    return (
+      <motion.div
+        initial={{ opacity: 0, scale: 0.96 }}
+        animate={{ opacity: 1, scale: 1 }}
+        className="w-full max-w-md flex flex-col items-center gap-5 text-center py-12"
+      >
+        <div
+          className="w-16 h-16 rounded-full flex items-center justify-center"
+          style={{ background: 'rgba(245,158,11,0.1)', border: '2px solid rgba(245,158,11,0.4)' }}
+        >
+          <span className="text-2xl">⚠️</span>
+        </div>
+        <div className="font-condensed font-black text-2xl text-white">TRACKING UNAVAILABLE</div>
+        <div
+          className="font-mono text-xs text-amber-400/90 px-5 py-3 rounded-xl leading-relaxed max-w-sm"
+          style={{ background: 'rgba(245,158,11,0.06)', border: '1px solid rgba(245,158,11,0.2)' }}
+        >
+          {trackingError || 'Emergency record not found. The request ID may be invalid or the record may not exist.'}
+        </div>
+        <div className="font-mono text-[11px] text-white/30 space-y-1">
+          <div>Request ID: {requestId}</div>
+          {initialIncidentId && <div>Incident ID: {initialIncidentId}</div>}
+        </div>
+        <div className="flex gap-3 mt-2">
+          <button
+            onClick={() => { window.location.reload(); }}
+            className="px-4 py-2 rounded-lg font-mono text-xs text-white/50 hover:text-white/80 transition-colors"
+            style={{ border: '1px solid rgba(255,255,255,0.1)' }}
+          >
+            🔄 Retry
+          </button>
+          <a
+            href="/"
+            className="px-4 py-2 rounded-lg font-mono text-xs text-white/50 hover:text-white/80 transition-colors"
+            style={{ border: '1px solid rgba(255,255,255,0.1)' }}
+          >
+            ← Return Home
+          </a>
+        </div>
+        <div className="font-mono text-[10px] text-white/20 mt-2">
+          If you just submitted, please wait 5–10 seconds and refresh.
+        </div>
+      </motion.div>
+    );
+  }
+
   // Map markers construction
   const mapMarkers: MapMarker[] = [];
   const citizenLat = trackingData?.citizen?.latitude || trackingData?.incident?.latitude;
   const citizenLng = trackingData?.citizen?.longitude || trackingData?.incident?.longitude;
 
   if (citizenLat && citizenLng) {
+
     mapMarkers.push({
       id: 'citizen-location',
       type: 'citizen',

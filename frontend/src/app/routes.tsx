@@ -117,6 +117,8 @@ export const router = createBrowserRouter([
       // Public pages (no auth required)
       { path: 'emergency', Component: EmergencyHelp },
       { path: 'signup', Component: CitizenSignup },
+      // Public SOS tracking — accessible without login (citizen tracks their own submission)
+      { path: 'citizen/sos', Component: SOSFlow },
 
       // ── CITIZEN ──────────────────────────────────────────────────────────
       {
