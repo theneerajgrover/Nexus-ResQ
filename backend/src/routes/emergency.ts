@@ -380,3 +380,98 @@ emergencyRouter.get('/history', optionalAuth, async (req: Request, res: Response
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
+// GET /api/emergency/sos-status
+// Public citizen-facing tracking status.
+// Validates requestId, optionally validates incidentId cross-reference.
+// Returns a controlled public-safe payload. No authentication required.
+// No private operational data (responder names, keys, admin info) is exposed.
+emergencyRouter.get('/sos-status', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const rawRequestId = (req.query.requestId || req.query.request_id || '') as string;
+    const rawIncidentId = (req.query.incidentId || req.query.incident_id || '') as string;
+
+    const requestId = rawRequestId.trim();
+    if (!requestId) {
+      res.status(400).json({ success: false, error: 'requestId query parameter is required.' });
+      return;
+    }
+
+    // Fetch the emergency request — only safe public fields
+    const reqRes = await query(
+      `SELECT id, emergency_type, assistance_requested, location, formatted_address, latitude, longitude,
+              status, incident_id, created_at, updated_at, location_verified, location_source
+       FROM emergency_requests
+       WHERE id = $1`,
+      [requestId]
+    );
+
+    if (!reqRes.rowCount || reqRes.rowCount === 0) {
+      res.status(404).json({
+        success: false,
+        error: `Emergency request "${requestId}" not found. Please check your Request ID.`,
+      });
+      return;
+    }
+
+    const er = reqRes.rows[0];
+
+    // Cross-validate incidentId if provided
+    if (rawIncidentId.trim()) {
+      const incidentId = rawIncidentId.trim();
+      if (er.incident_id !== incidentId) {
+        res.status(400).json({
+          success: false,
+          error: `The provided request ID and incident ID do not correspond to the same emergency record. Please check your tracking link.`,
+        });
+        return;
+      }
+    }
+
+    // Fetch incident status — only safe public fields
+    let incidentStatus: any = null;
+    if (er.incident_id) {
+      const incRes = await query(
+        `SELECT id, type, severity, status, location, latitude, longitude, created_at, updated_at
+         FROM incidents WHERE id = $1`,
+        [er.incident_id]
+      );
+      if (incRes.rowCount && incRes.rowCount > 0) {
+        const inc = incRes.rows[0];
+        incidentStatus = {
+          id: inc.id,
+          type: inc.type,
+          severity: inc.severity,
+          status: inc.status,
+          location: inc.location,
+          latitude: inc.latitude ? parseFloat(inc.latitude) : null,
+          longitude: inc.longitude ? parseFloat(inc.longitude) : null,
+          createdAt: inc.created_at,
+          updatedAt: inc.updated_at,
+        };
+      }
+    }
+
+    res.json({
+      success: true,
+      data: {
+        requestId: er.id,
+        status: er.status,
+        emergencyType: er.emergency_type,
+        assistanceRequested: er.assistance_requested,
+        location: er.formatted_address || er.location,
+        latitude: er.latitude ? parseFloat(er.latitude) : null,
+        longitude: er.longitude ? parseFloat(er.longitude) : null,
+        locationVerified: er.location_verified,
+        createdAt: er.created_at,
+        updatedAt: er.updated_at,
+        incidentId: er.incident_id || null,
+        incident: incidentStatus,
+      },
+    });
+  } catch (err: any) {
+    console.error('[Emergency Error] GET /sos-status:', err.message);
+    res.status(500).json({ success: false, error: 'Failed to retrieve emergency status. Please try again.' });
+  }
+});
+
