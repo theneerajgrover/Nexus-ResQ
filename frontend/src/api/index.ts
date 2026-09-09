@@ -28,8 +28,14 @@ export const weatherApi = {
 };
 
 export const locationApi = {
-  reverseGeocode: (lat: number, lon: number) =>
-    apiClient.get(`/location/reverse-geocode?lat=${lat}&lon=${lon}`),
+  reverseGeocode: (lat: number, lon: number, accuracy?: number | null) =>
+    apiClient.post('/location/reverse-geocode', { latitude: lat, longitude: lon, accuracy }),
+  autocomplete: (input: string) =>
+    apiClient.get(`/location/autocomplete?input=${encodeURIComponent(input)}`),
+  getPlaceDetails: (placeId: string) =>
+    apiClient.post('/location/place-details', { placeId }),
+  validateAddress: (address: string) =>
+    apiClient.post('/location/validate', { address }),
 };
 
 // ── Incidents Service ────────────────────────────────────────
@@ -49,9 +55,28 @@ export const emergencyApi = {
     assistance_needed?: string[];
     location?: string;
     location_name?: string;
+    formatted_address?: string;
     latitude?: number;
     longitude?: number;
     accuracy?: number;
+    device_latitude?: number;
+    device_longitude?: number;
+    device_accuracy_meters?: number;
+    device_location_timestamp?: string;
+    incident_latitude?: number;
+    incident_longitude?: number;
+    incident_accuracy_meters?: number;
+    place_id?: string | null;
+    village?: string | null;
+    locality?: string | null;
+    city?: string | null;
+    district?: string | null;
+    state?: string | null;
+    postal_code?: string | null;
+    country?: string | null;
+    location_source?: string;
+    location_verified?: boolean;
+    location_confidence?: number;
     details?: string;
     description?: string;
     name?: string;

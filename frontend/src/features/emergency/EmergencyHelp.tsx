@@ -79,26 +79,65 @@ export default function EmergencyHelp() {
     icon?: string;
   } | null>(null);
 
+  // Production location system states (Device vs Incident separation & Google verification)
+  const [deviceCoords, setDeviceCoords] = useState<{ lat: number; lon: number; accuracy: number | null; timestamp: number } | null>(null);
+  const [incidentCoords, setIncidentCoords] = useState<{ lat: number; lon: number; accuracy: number | null } | null>(null);
+  const [addressComponents, setAddressComponents] = useState<{
+    village?: string | null;
+    locality?: string | null;
+    city?: string | null;
+    district?: string | null;
+    state?: string | null;
+    postal_code?: string | null;
+    country?: string | null;
+    place_id?: string | null;
+  } | null>(null);
+  const [locationVerified, setLocationVerified] = useState(false);
+  const [locationStatus, setLocationStatus] = useState<string>('IDLE');
+  const [predictions, setPredictions] = useState<Array<{ place_id: string; description: string; main_text: string; secondary_text: string }>>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [isValidatingAddress, setIsValidatingAddress] = useState(false);
+  const [lastValidatedLocation, setLastValidatedLocation] = useState('');
+
   // Automatically use store GPS coords if available, or trigger automatic detection on mount
   useEffect(() => {
     if (userLocation?.status === 'locked' && userLocation.lat && userLocation.lng) {
       const lat = userLocation.lat;
       const lon = userLocation.lng;
+      const acc = userLocation.accuracy ?? null;
       setGeoCoords({ lat, lon });
-      if (userLocation.accuracy) setGeoAccuracy(userLocation.accuracy);
+      if (acc) setGeoAccuracy(acc);
+      setDeviceCoords({ lat, lon, accuracy: acc, timestamp: userLocation.timestamp || Date.now() });
+      setIncidentCoords({ lat, lon, accuracy: acc });
+      setLocationStatus('GPS COORDINATES LOCKED');
 
       // Auto reverse-geocode address if location field is empty
-      locationApi.reverseGeocode(lat, lon).then((geoRes) => {
-        const gData = geoRes?.data || geoRes;
-        const address = gData?.formattedAddress || gData?.rawDisplayName || gData?.display_name;
+      locationApi.reverseGeocode(lat, lon, acc).then((geoRes: any) => {
+        const gData = geoRes?.data?.data || geoRes?.data || geoRes;
+        const address = gData?.formatted_address || gData?.formattedAddress || gData?.rawDisplayName || gData?.display_name;
         if (address) {
           setLocation((prev) => prev || address);
+          setLastValidatedLocation(address);
+        }
+        if (gData) {
+          setAddressComponents({
+            village: gData.village,
+            locality: gData.locality,
+            city: gData.city,
+            district: gData.district,
+            state: gData.state,
+            postal_code: gData.postal_code || gData.postcode,
+            country: gData.country,
+            place_id: gData.place_id,
+          });
+          setLocationVerified(Boolean(gData.verified));
+          setLocationStatus(gData.verified ? 'LOCATION VERIFIED' : 'LOCATION RESOLVED');
         }
       }).catch((e) => console.warn('Reverse geocoding failed:', e));
 
       // Auto fetch weather
-      weatherApi.getCurrent(lat, lon).then((weatherRes) => {
-        const wData = weatherRes?.data || weatherRes?.current;
+      weatherApi.getCurrent(lat, lon).then((weatherRes: any) => {
+        const wData = weatherRes?.data?.data || weatherRes?.data || weatherRes?.current;
         if (wData) {
           setWeatherData({
             temperature: wData.temperature,
@@ -124,39 +163,60 @@ export default function EmergencyHelp() {
   const detectLocation = () => {
     if (!navigator.geolocation) {
       setGeoError('Geolocation is not supported by your browser.');
+      setLocationStatus('ERROR');
       return;
     }
     setGeoLoading(true);
     setGeoError(null);
+    setLocationStatus('LOCATING GPS...');
     navigator.geolocation.getCurrentPosition(
       async (pos) => {
         const lat = pos.coords.latitude;
         const lon = pos.coords.longitude;
-        const acc = pos.coords.accuracy;
+        const acc = pos.coords.accuracy ?? null;
+        const ts = pos.timestamp || Date.now();
         setGeoCoords({ lat, lon });
         setGeoAccuracy(acc);
+        setDeviceCoords({ lat, lon, accuracy: acc, timestamp: ts });
+        setIncidentCoords({ lat, lon, accuracy: acc });
+        setLocationStatus('GPS COORDINATES LOCKED');
         setUserLocation({
           lat,
           lng: lon,
-          accuracy: acc,
-          timestamp: pos.timestamp || Date.now(),
+          accuracy: acc ?? undefined,
+          timestamp: ts,
           status: 'locked',
         });
         try {
           // Reverse geocode via server proxy
-          const geoRes = await locationApi.reverseGeocode(lat, lon);
-          const gData = geoRes?.data || geoRes;
-          const address = gData?.formattedAddress || gData?.rawDisplayName || gData?.display_name;
-          if (address && !location) {
+          const geoRes: any = await locationApi.reverseGeocode(lat, lon, acc);
+          const gData = geoRes?.data?.data || geoRes?.data || geoRes;
+          const address = gData?.formatted_address || gData?.formattedAddress || gData?.rawDisplayName || gData?.display_name;
+          if (address) {
             setLocation(address);
+            setLastValidatedLocation(address);
+          }
+          if (gData) {
+            setAddressComponents({
+              village: gData.village,
+              locality: gData.locality,
+              city: gData.city,
+              district: gData.district,
+              state: gData.state,
+              postal_code: gData.postal_code || gData.postcode,
+              country: gData.country,
+              place_id: gData.place_id,
+            });
+            setLocationVerified(Boolean(gData.verified));
+            setLocationStatus(gData.verified ? 'LOCATION VERIFIED' : 'LOCATION RESOLVED');
           }
         } catch (e) {
           console.warn('Reverse geocoding failed:', e);
         }
         try {
           // Live weather via server proxy
-          const weatherRes = await weatherApi.getCurrent(lat, lon);
-          const wData = weatherRes?.data || weatherRes?.current;
+          const weatherRes: any = await weatherApi.getCurrent(lat, lon);
+          const wData = weatherRes?.data?.data || weatherRes?.data || weatherRes?.current;
           if (wData) {
             setWeatherData({
               temperature: wData.temperature,
@@ -173,14 +233,116 @@ export default function EmergencyHelp() {
       },
       (err) => {
         setGeoLoading(false);
+        setLocationStatus('ERROR');
         if (err.code === err.PERMISSION_DENIED) {
           setGeoError('Location permission denied. Please enter address manually.');
         } else {
           setGeoError('GPS signal unavailable. Please enter address manually.');
         }
       },
-      { timeout: 10000, enableHighAccuracy: true }
+      { timeout: 10000, enableHighAccuracy: true, maximumAge: 30000 }
     );
+  };
+
+  // Handle typing in location input
+  const handleLocationInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    setLocation(val);
+    setGeoError(null);
+    if (val.trim() !== lastValidatedLocation) {
+      setLocationVerified(false);
+    }
+    if (val.trim().length >= 2) {
+      locationApi.autocomplete(val).then((res: any) => {
+        const list = res?.data?.data || res?.data || [];
+        if (Array.isArray(list)) {
+          setPredictions(list);
+          setShowSuggestions(list.length > 0);
+        }
+      }).catch(() => {
+        setPredictions([]);
+        setShowSuggestions(false);
+      });
+    } else {
+      setPredictions([]);
+      setShowSuggestions(false);
+    }
+  };
+
+  // Select candidate place from Google suggestions
+  const handleSelectPlace = async (p: any) => {
+    setShowSuggestions(false);
+    setLocation(p.description);
+    setLastValidatedLocation(p.description);
+    try {
+      const detailsRes: any = await locationApi.getPlaceDetails(p.place_id);
+      const data = detailsRes?.data?.data || detailsRes?.data;
+      if (data && typeof data.latitude === 'number' && typeof data.longitude === 'number') {
+        setIncidentCoords({
+          lat: data.latitude,
+          lon: data.longitude,
+          accuracy: data.accuracy_meters || null,
+        });
+        setGeoCoords({ lat: data.latitude, lon: data.longitude });
+        setAddressComponents({
+          village: data.village,
+          locality: data.locality,
+          city: data.city,
+          district: data.district,
+          state: data.state,
+          postal_code: data.postal_code,
+          country: data.country,
+          place_id: data.place_id,
+        });
+        setLocationVerified(true);
+        setLocationStatus('LOCATION VERIFIED');
+      }
+    } catch (err) {
+      console.warn('Failed to fetch place details:', err);
+    }
+  };
+
+  // Validate address before advancing from Location step
+  const handleContinueFromLocation = async () => {
+    if (!canProceedLocation) return;
+    if (locationVerified) {
+      setStep('details');
+      return;
+    }
+    setIsValidatingAddress(true);
+    setGeoError(null);
+    try {
+      const valRes: any = await locationApi.validateAddress(location.trim());
+      const data = valRes?.data?.data || valRes?.data;
+      if (data && typeof data.latitude === 'number' && typeof data.longitude === 'number') {
+        setIncidentCoords({
+          lat: data.latitude,
+          lon: data.longitude,
+          accuracy: data.accuracy_meters || null,
+        });
+        setAddressComponents({
+          village: data.village,
+          locality: data.locality,
+          city: data.city,
+          district: data.district,
+          state: data.state,
+          postal_code: data.postal_code,
+          country: data.country,
+          place_id: data.place_id,
+        });
+        setLocationVerified(true);
+        setLastValidatedLocation(data.formatted_address || location.trim());
+        setLocationStatus('LOCATION VERIFIED');
+        setStep('details');
+      } else {
+        setGeoError('Location could not be verified. Please select a valid address from suggestions or lock GPS.');
+      }
+    } catch (err: any) {
+      const errMsg = err?.response?.data?.error || err?.message || 'Could not verify address with location provider. Please select a recognized address from suggestions.';
+      setGeoError(errMsg);
+    } finally {
+      setIsValidatingAddress(false);
+    }
   };
 
   const handleSubmit = async () => {
@@ -191,12 +353,34 @@ export default function EmergencyHelp() {
     setIsSubmitting(true);
     setSubmitError(null);
     try {
+      const effectiveLat = incidentCoords?.lat ?? deviceCoords?.lat ?? (geoCoords ? geoCoords.lat : undefined);
+      const effectiveLon = incidentCoords?.lon ?? deviceCoords?.lon ?? (geoCoords ? geoCoords.lon : undefined);
+      const effectiveAcc = incidentCoords?.accuracy ?? deviceCoords?.accuracy ?? geoAccuracy ?? undefined;
+
       const res = await emergencyApi.submitRequest({
         emergency_type: emergencyType || 'other',
         location_name: location.trim(),
-        latitude: geoCoords ? geoCoords.lat : undefined,
-        longitude: geoCoords ? geoCoords.lon : undefined,
-        accuracy: geoAccuracy ?? undefined,
+        formatted_address: location.trim(),
+        latitude: effectiveLat,
+        longitude: effectiveLon,
+        accuracy: effectiveAcc,
+        device_latitude: deviceCoords?.lat,
+        device_longitude: deviceCoords?.lon,
+        device_accuracy_meters: deviceCoords?.accuracy ?? undefined,
+        device_location_timestamp: deviceCoords ? new Date(deviceCoords.timestamp).toISOString() : undefined,
+        incident_latitude: incidentCoords?.lat,
+        incident_longitude: incidentCoords?.lon,
+        incident_accuracy_meters: incidentCoords?.accuracy ?? undefined,
+        place_id: addressComponents?.place_id ?? undefined,
+        village: addressComponents?.village ?? undefined,
+        locality: addressComponents?.locality ?? undefined,
+        city: addressComponents?.city ?? undefined,
+        district: addressComponents?.district ?? undefined,
+        state: addressComponents?.state ?? undefined,
+        postal_code: addressComponents?.postal_code ?? undefined,
+        country: addressComponents?.country ?? undefined,
+        location_source: locationVerified ? (deviceCoords && Math.abs((deviceCoords.lat - (incidentCoords?.lat || 0))) < 0.0001 ? 'gps' : 'google_places') : 'manual',
+        location_verified: locationVerified,
         description: details || `Assistance needed: ${assistance.join(', ') || 'Emergency'}`,
         contact_name: name.trim() || undefined,
         contact_phone: phone.trim() || undefined,
@@ -320,20 +504,69 @@ export default function EmergencyHelp() {
                       <span>{geoLoading ? 'DETECTING GPS...' : 'USE CURRENT GPS LOCATION'}</span>
                     </button>
                   </div>
-                  <input
-                    type="text"
-                    value={location}
-                    onChange={(e) => setLocation(e.target.value)}
-                    placeholder="Street address, landmark, or description of location (min 3 characters)"
-                    className="w-full px-4 py-3 rounded-lg font-mono text-sm"
-                    style={{ background: 'rgba(255,255,255,0.04)', border: `1px solid ${location.trim().length >= 3 ? 'rgba(220,38,38,0.4)' : 'rgba(255,255,255,0.1)'}`, color: '#e8edf2', outline: 'none' }}
-                  />
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={location}
+                      onChange={handleLocationInputChange}
+                      placeholder="Street address, landmark, or description of location (min 3 characters)"
+                      className="w-full px-4 py-3 rounded-lg font-mono text-sm"
+                      style={{ background: 'rgba(255,255,255,0.04)', border: `1px solid ${location.trim().length >= 3 ? 'rgba(220,38,38,0.4)' : 'rgba(255,255,255,0.1)'}`, color: '#e8edf2', outline: 'none' }}
+                    />
 
-                  {/* GPS & Weather indicators */}
-                  {geoCoords && (
-                    <div className="mt-2 flex items-center gap-2 font-mono text-[11px] text-emerald-400 bg-emerald-950/20 border border-emerald-500/20 px-3 py-1.5 rounded">
-                      <span>✓</span>
-                      <span>GPS Coordinates Locked: {geoCoords.lat.toFixed(5)}, {geoCoords.lon.toFixed(5)}</span>
+                    {/* Google Places Autocomplete Suggestions Dropdown */}
+                    {showSuggestions && predictions.length > 0 && (
+                      <div
+                        className="absolute left-0 right-0 mt-1 z-30 rounded-lg overflow-hidden font-mono text-xs shadow-2xl"
+                        style={{ background: '#0b0f14', border: '1px solid rgba(220,38,38,0.4)', backdropFilter: 'blur(12px)' }}
+                      >
+                        <div className="px-3 py-1.5 text-[10px] text-white/40 tracking-wider border-b border-white/5 uppercase bg-white/[0.02]">
+                          Suggested Locations (Google Maps)
+                        </div>
+                        {predictions.map((p) => (
+                          <button
+                            key={p.place_id}
+                            type="button"
+                            onClick={() => handleSelectPlace(p)}
+                            className="w-full text-left px-3.5 py-2.5 hover:bg-red-500/15 border-b border-white/5 last:border-0 transition-colors flex items-center gap-2 text-white/80 hover:text-white cursor-pointer"
+                          >
+                            <span className="text-red-400 shrink-0">📍</span>
+                            <div className="truncate">
+                              <span className="font-bold text-white">{p.main_text}</span>
+                              {p.secondary_text && <span className="text-white/40 ml-1.5 text-[11px]">{p.secondary_text}</span>}
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* GPS Status & Telemetry indicators */}
+                  {geoLoading && (
+                    <div className="mt-2 flex items-center gap-2 font-mono text-[11px] text-amber-400 bg-amber-950/20 border border-amber-500/20 px-3 py-1.5 rounded">
+                      <span className="animate-spin">📡</span>
+                      <span>LOCATING GPS &amp; RESOLVING TELEMETRY...</span>
+                    </div>
+                  )}
+                  {!geoLoading && (geoCoords || incidentCoords) && (
+                    <div className="mt-2 flex items-center justify-between font-mono text-[11px] text-emerald-400 bg-emerald-950/20 border border-emerald-500/20 px-3 py-1.5 rounded">
+                      <div className="flex items-center gap-2">
+                        <span>✓</span>
+                        <span>
+                          GPS Coordinates Locked: {(incidentCoords?.lat || geoCoords?.lat)?.toFixed(5)}, {(incidentCoords?.lon || geoCoords?.lon)?.toFixed(5)}
+                          {geoAccuracy ? ` (±${Math.round(geoAccuracy)}m)` : ''}
+                        </span>
+                      </div>
+                      <span
+                        className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded"
+                        style={{
+                          background: locationVerified ? 'rgba(16,185,129,0.2)' : 'rgba(245,158,11,0.2)',
+                          color: locationVerified ? '#34d399' : '#fbbf24',
+                          border: `1px solid ${locationVerified ? 'rgba(16,185,129,0.4)' : 'rgba(245,158,11,0.4)'}`,
+                        }}
+                      >
+                        {locationVerified ? 'LOCATION VERIFIED' : 'LOCATION RESOLVED'}
+                      </span>
                     </div>
                   )}
                   {geoError && (
@@ -423,14 +656,14 @@ export default function EmergencyHelp() {
                   ← BACK
                 </button>
                 <motion.button
-                  onClick={() => setStep('details')}
-                  disabled={!canProceedLocation}
-                  className="flex-1 py-3.5 rounded-xl font-condensed font-black text-base tracking-wide"
+                  onClick={handleContinueFromLocation}
+                  disabled={!canProceedLocation || isValidatingAddress}
+                  className="flex-1 py-3.5 rounded-xl font-condensed font-black text-base tracking-wide flex items-center justify-center gap-2 cursor-pointer"
                   style={{ background: canProceedLocation ? '#dc2626' : 'rgba(220,38,38,0.15)', color: canProceedLocation ? '#fff' : 'rgba(255,255,255,0.25)' }}
                   whileHover={canProceedLocation ? { scale: 1.01 } : {}}
                   whileTap={canProceedLocation ? { scale: 0.99 } : {}}
                 >
-                  CONTINUE →
+                  {isValidatingAddress ? 'VERIFYING LOCATION...' : 'CONTINUE →'}
                 </motion.button>
               </div>
             </motion.div>
