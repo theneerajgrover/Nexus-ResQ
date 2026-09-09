@@ -472,13 +472,28 @@ export class AgentOrchestratorService {
       await sleep(380);
 
       const { computeRouteAlternatives, evaluateRouteSafety, persistActiveRoute } = await import('./routingService');
-      const originCoords = {
-        lat: primaryResponder.latitude ? parseFloat(primaryResponder.latitude) : parseFloat(incident.latitude) + 0.012,
-        lng: primaryResponder.longitude ? parseFloat(primaryResponder.longitude) : parseFloat(incident.longitude) - 0.015,
-      };
+      const incLat = incident.latitude !== null && incident.latitude !== undefined && !isNaN(Number(incident.latitude))
+        ? Number(incident.latitude)
+        : null;
+      const incLng = incident.longitude !== null && incident.longitude !== undefined && !isNaN(Number(incident.longitude))
+        ? Number(incident.longitude)
+        : null;
+
+      const respLat = primaryResponder.latitude !== null && primaryResponder.latitude !== undefined && !isNaN(Number(primaryResponder.latitude))
+        ? Number(primaryResponder.latitude)
+        : null;
+      const respLng = primaryResponder.longitude !== null && primaryResponder.longitude !== undefined && !isNaN(Number(primaryResponder.longitude))
+        ? Number(primaryResponder.longitude)
+        : null;
+
       const destCoords = {
-        lat: parseFloat(incident.latitude) || 52.0,
-        lng: parseFloat(incident.longitude) || 48.0,
+        lat: incLat !== null ? incLat : (respLat !== null ? respLat + 0.012 : 0),
+        lng: incLng !== null ? incLng : (respLng !== null ? respLng - 0.015 : 0),
+      };
+
+      const originCoords = {
+        lat: respLat !== null ? respLat : destCoords.lat + 0.012,
+        lng: respLng !== null ? respLng : destCoords.lng - 0.015,
       };
 
       const candidateRoutes = await computeRouteAlternatives(originCoords, destCoords);
@@ -1021,21 +1036,33 @@ export class AgentOrchestratorService {
 
         // F. Create / Update missions record
         const missionId = `MSN-${incidentId.replace(/[^0-9]/g, '') || Date.now().toString().slice(-4)}`;
+        const missionLat = (incRow.latitude !== null && incRow.latitude !== undefined && !isNaN(Number(incRow.latitude)))
+          ? Number(incRow.latitude)
+          : null;
+        const missionLng = (incRow.longitude !== null && incRow.longitude !== undefined && !isNaN(Number(incRow.longitude)))
+          ? Number(incRow.longitude)
+          : null;
+
         await client.query(`
           INSERT INTO missions (
             id, incident_id, responder_id, title, location, latitude, longitude, status, priority, casualties_reported, hazards, perimeter, notes, updated_at
           )
           VALUES ($1, $2, $3, $4, $5, $6, $7, 'ASSIGNED', $8, 0, $9, '250m', $10, CURRENT_TIMESTAMP)
           ON CONFLICT (id) DO UPDATE
-          SET responder_id = EXCLUDED.responder_id, status = 'ASSIGNED', updated_at = CURRENT_TIMESTAMP
+          SET responder_id = EXCLUDED.responder_id,
+              latitude = COALESCE(EXCLUDED.latitude, missions.latitude),
+              longitude = COALESCE(EXCLUDED.longitude, missions.longitude),
+              location = COALESCE(EXCLUDED.location, missions.location),
+              status = 'ASSIGNED',
+              updated_at = CURRENT_TIMESTAMP
         `, [
           missionId,
           incidentId,
           assignedRespId,
           `Operational Mission for ${incidentId}`,
           incRow.location || 'Incident Area',
-          incRow.latitude || 52.0,
-          incRow.longitude || 48.0,
+          missionLat,
+          missionLng,
           incRow.severity || 'HIGH',
           [incRow.type || 'GENERAL'],
           `Unit ${assignedUnitName} dispatched via human authorization.`
