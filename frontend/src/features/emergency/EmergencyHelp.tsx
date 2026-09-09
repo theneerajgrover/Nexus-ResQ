@@ -305,16 +305,31 @@ export default function EmergencyHelp() {
   // Validate address before advancing from Location step
   const handleContinueFromLocation = async () => {
     if (!canProceedLocation) return;
+
+    // Already verified via GPS lock or place selection → proceed immediately
     if (locationVerified) {
       setStep('details');
       return;
     }
+
+    // If GPS coordinates are already locked, allow proceeding even if text geocoding fails.
+    // The user is describing their GPS-locked location in their own words — coordinates take precedence.
+    const hasLockedGps = !!(deviceCoords?.lat || incidentCoords?.lat);
+    if (hasLockedGps) {
+      setLocationStatus('LOCATION RESOLVED');
+      setStep('details');
+      return;
+    }
+
     setIsValidatingAddress(true);
     setGeoError(null);
     try {
+      // apiClient returns the JSON body directly (not axios-style), so read top-level fields
       const valRes: any = await locationApi.validateAddress(location.trim());
+
+      // Success path: response has a nested data object with coordinates
       const data = valRes?.data?.data || valRes?.data;
-      if (data && typeof data.latitude === 'number' && typeof data.longitude === 'number') {
+      if (valRes?.success && data && typeof data.latitude === 'number' && typeof data.longitude === 'number') {
         setIncidentCoords({
           lat: data.latitude,
           lon: data.longitude,
@@ -335,10 +350,16 @@ export default function EmergencyHelp() {
         setLocationStatus('LOCATION VERIFIED');
         setStep('details');
       } else {
-        setGeoError('Location could not be verified. Please select a valid address from suggestions or lock GPS.');
+        // Surface the actual server error message (422 from validate returns top-level `error`)
+        const serverMsg = valRes?.error || valRes?.message;
+        setGeoError(
+          serverMsg ||
+          'Location could not be verified. Please pick an address from the dropdown suggestions, or click "USE CURRENT GPS LOCATION" to lock your position.'
+        );
       }
     } catch (err: any) {
-      const errMsg = err?.response?.data?.error || err?.message || 'Could not verify address with location provider. Please select a recognized address from suggestions.';
+      // Network or unexpected error
+      const errMsg = err?.message || 'Could not reach location service. Check your connection and try again.';
       setGeoError(errMsg);
     } finally {
       setIsValidatingAddress(false);
