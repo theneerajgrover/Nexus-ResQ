@@ -211,10 +211,6 @@ export const router = createBrowserRouter([
         path: 'command/dispatch',
         element: <CommandRoute><CommandHome /></CommandRoute>,
       },
-      {
-        path: 'command/evacuation',
-        element: <CommandRoute><CommandHome /></CommandRoute>,
-      },
 
       // ── RESOURCE MANAGER ─────────────────────────────────────────────────
       {

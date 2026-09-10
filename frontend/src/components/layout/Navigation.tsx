@@ -30,7 +30,6 @@ const navConfig: Record<NonNullable<Role>, { label: string; path: string }[]> = 
     { label: 'INTELLIGENCE', path: '/command/intelligence' },
     { label: 'WARNINGS', path: '/command/warnings' },
     { label: 'WEATHER', path: '/command/weather' },
-    { label: 'EVACUATION', path: '/command/evacuation' },
     { label: 'INCIDENTS', path: '/command/incidents' },
     { label: 'DISPATCH', path: '/command/dispatch' },
   ],
