@@ -28,6 +28,7 @@ incidentsRouter.get('/', async (req: Request, res: Response): Promise<void> => {
         i.responders_count as responders, 
         i.responders_count,
         i.pending, 
+        i.shelter_id,
         i.created_at as "createdAt",
         i.created_at,
         i.updated_at,
@@ -178,7 +179,12 @@ incidentsRouter.post('/report', optionalAuth, async (req: Request, res: Response
       reporter_phone,
       phone,
       media_url,
+      shelter_id,
+      shelterId,
     } = req.body;
+
+    const rawShelterId = (shelter_id || shelterId || '').trim();
+    const effectiveShelterId = rawShelterId ? rawShelterId : null;
 
     const effectiveLocation = (location || location_name || '').trim();
     if (!effectiveLocation || effectiveLocation.length < 3) {
@@ -196,22 +202,27 @@ incidentsRouter.post('/report', optionalAuth, async (req: Request, res: Response
 
     const rawLat = latitude ?? lat;
     const rawLon = longitude ?? lng ?? lon;
-    const validLat = typeof rawLat === 'number' && !isNaN(rawLat) && rawLat >= -90 && rawLat <= 90 ? rawLat : null;
-    const validLon = typeof rawLon === 'number' && !isNaN(rawLon) && rawLon >= -180 && rawLon <= 180 ? rawLon : null;
+    const parseLat = typeof rawLat === 'number' ? rawLat : (rawLat !== undefined && rawLat !== null && rawLat !== '' ? parseFloat(String(rawLat)) : null);
+    const parseLon = typeof rawLon === 'number' ? rawLon : (rawLon !== undefined && rawLon !== null && rawLon !== '' ? parseFloat(String(rawLon)) : null);
+    const validLat = parseLat !== null && !isNaN(parseLat) && parseLat >= -90 && parseLat <= 90 ? parseLat : null;
+    const validLon = parseLon !== null && !isNaN(parseLon) && parseLon >= -180 && parseLon <= 180 ? parseLon : null;
 
     const effectiveDescription = (description || details || `Reported ${effectiveType} at ${effectiveLocation}`).trim();
     const effectiveAffected = Math.max(1, parseInt(affected_people || affectedPeople || '1', 10) || 1);
 
     const userRole = req.user?.role || 'citizen';
-    const effectiveSource = source || (
-      userRole === 'responder' ? 'PORTAL_REPORT' :
-      userRole === 'resource_manager' ? 'PORTAL_REPORT' :
-      userRole === 'authority_command' || userRole === 'admin' ? 'AUTHORITY_REPORT' :
-      'CITIZEN_REPORT'
-    );
+    const isResourceManager = userRole === 'resource_manager' || source === 'RESOURCE_MANAGER';
+    const effectiveSource = isResourceManager
+      ? 'RESOURCE_MANAGER'
+      : (source || (
+          userRole === 'responder' ? 'PORTAL_REPORT' :
+          userRole === 'authority_command' || userRole === 'admin' ? 'AUTHORITY_REPORT' :
+          'CITIZEN_REPORT'
+        ));
 
-    const effectiveReporterName = (reporter_name || name || req.user?.name || 'Anonymous Citizen').trim();
-    const effectivePhone = (reporter_phone || phone || (req.user as any)?.phone || '').trim() || null;
+    const effectiveReporterName = (req.user?.name || reporter_name || name || (isResourceManager ? 'Resource Manager' : 'Anonymous Citizen')).trim();
+    const effectivePhone = ((req.user as any)?.phone || reporter_phone || phone || '').trim() || null;
+    const effectiveUserId = req.user?.id || null;
     const reportId = `RPT-${Date.now().toString().slice(-6)}-${Math.floor(Math.random() * 1000)}`;
 
     // Automatic incident correlation check
@@ -264,10 +275,11 @@ incidentsRouter.post('/report', optionalAuth, async (req: Request, res: Response
         SET affected_people = COALESCE(affected_people, 0) + $1,
             verification_status = 'VERIFIED',
             pending = TRUE,
+            shelter_id = COALESCE(shelter_id, $3),
             updated_at = CURRENT_TIMESTAMP
         WHERE id = $2
         RETURNING *
-      `, [effectiveAffected, targetIncidentId]);
+      `, [effectiveAffected, targetIncidentId, effectiveShelterId]);
       incidentData = updateRes.rows[0];
 
       // Add audit history entry
@@ -290,6 +302,7 @@ incidentsRouter.post('/report', optionalAuth, async (req: Request, res: Response
         disasterType: effectiveType,
         location: effectiveLocation,
         severity: effectiveSeverity,
+        shelter_id: incidentData?.shelter_id || effectiveShelterId,
         isCorrelated: true,
         correlationReason: correlation.reason,
         timestamp: Date.now(),
@@ -300,6 +313,7 @@ incidentsRouter.post('/report', optionalAuth, async (req: Request, res: Response
         title: incidentData?.title,
         severity: incidentData?.severity,
         affected_people: incidentData?.affected_people,
+        shelter_id: incidentData?.shelter_id || effectiveShelterId,
         verification_status: 'VERIFIED',
         pending: true,
       });
@@ -316,9 +330,9 @@ incidentsRouter.post('/report', optionalAuth, async (req: Request, res: Response
       const insertInc = await query(`
         INSERT INTO incidents (
           id, title, type, severity, location, latitude, longitude, status, responders_count, pending,
-          source, source_reference, description, affected_people, verification_status, category
+          source, source_reference, description, affected_people, verification_status, category, shelter_id
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, 'ACTIVE', 0, TRUE, $8, $9, $10, $11, 'UNVERIFIED', $12)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, 'ACTIVE', 0, TRUE, $8, $9, $10, $11, 'UNVERIFIED', $12, $13)
         RETURNING *
       `, [
         targetIncidentId,
@@ -333,6 +347,7 @@ incidentsRouter.post('/report', optionalAuth, async (req: Request, res: Response
         effectiveDescription,
         effectiveAffected,
         effectiveType,
+        effectiveShelterId,
       ]);
       incidentData = insertInc.rows[0];
 
@@ -347,7 +362,7 @@ incidentsRouter.post('/report', optionalAuth, async (req: Request, res: Response
         reportId,
         targetIncidentId,
         effectiveSource,
-        req.user?.id || null,
+        effectiveUserId,
         effectiveReporterName,
         effectivePhone,
         userRole,
@@ -384,6 +399,7 @@ incidentsRouter.post('/report', optionalAuth, async (req: Request, res: Response
         source: effectiveSource,
         description: effectiveDescription,
         affected_people: effectiveAffected,
+        shelter_id: effectiveShelterId,
         verification_status: 'UNVERIFIED',
         pending: true,
         timestamp: Date.now(),
@@ -401,6 +417,7 @@ incidentsRouter.post('/report', optionalAuth, async (req: Request, res: Response
         ? `Report successfully submitted and correlated with active incident ${targetIncidentId}. Replanning initiated.`
         : `New incident ${targetIncidentId} successfully registered in disaster coordination system. 11-agent pipeline started.`,
       data: {
+        id: targetIncidentId,
         reportId,
         incidentId: targetIncidentId,
         isCorrelated,
@@ -409,6 +426,9 @@ incidentsRouter.post('/report', optionalAuth, async (req: Request, res: Response
         disasterType: effectiveType,
         severity: effectiveSeverity,
         location: effectiveLocation,
+        latitude: incidentData?.latitude ? parseFloat(incidentData.latitude) : validLat,
+        longitude: incidentData?.longitude ? parseFloat(incidentData.longitude) : validLon,
+        shelterId: incidentData?.shelter_id || effectiveShelterId,
         affectedPeople: effectiveAffected,
         status: incidentData?.status || 'ACTIVE',
       },

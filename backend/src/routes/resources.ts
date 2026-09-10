@@ -2,7 +2,7 @@
 // RESOURCE MANAGEMENT REST ROUTER
 // ============================================================
 import { Router, Request, Response } from 'express';
-import { query } from '../db';
+import { query, pool } from '../db';
 import { broadcastEvent } from './realtime';
 
 export const resourcesRouter = Router();
@@ -263,6 +263,8 @@ resourcesRouter.get('/supplies', async (req: Request, res: Response): Promise<vo
         name, 
         category, 
         qty, 
+        COALESCE(allocated, 0)::int as allocated,
+        (qty - COALESCE(allocated, 0))::int as available,
         demand, 
         unit, 
         location, 
@@ -305,6 +307,7 @@ resourcesRouter.get('/equipment', async (req: Request, res: Response): Promise<v
         name, 
         qty, 
         available, 
+        (qty - available)::int as allocated,
         status, 
         location
       FROM equipment
@@ -495,3 +498,182 @@ resourcesRouter.post('/responders', async (req: Request, res: Response): Promise
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
+// POST /api/resources/prototype/trigger-recovery
+resourcesRouter.post('/prototype/trigger-recovery', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { releaseHours } = req.body || {};
+    const { runPrototypeResourceRecovery } = await import('../services/prototypeResourceRecovery');
+    const report = await runPrototypeResourceRecovery(
+      releaseHours !== undefined ? { releaseHours: Number(releaseHours) } : undefined
+    );
+    res.json({ success: true, report });
+  } catch (err: any) {
+    console.error('[Resources Error] /prototype/trigger-recovery:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// PATCH /api/resources/supplies/:id
+resourcesRouter.patch('/supplies/:id', async (req: Request, res: Response): Promise<void> => {
+  const client = await pool.connect();
+  try {
+    const { id } = req.params;
+    const { qty, demand, location } = req.body;
+
+    await client.query('BEGIN');
+
+    const currentRes = await client.query('SELECT * FROM supplies WHERE id = $1 FOR UPDATE', [id]);
+    if (currentRes.rowCount === 0) {
+      await client.query('ROLLBACK');
+      res.status(404).json({ success: false, error: `Supply item ${id} not found.` });
+      return;
+    }
+
+    const current = currentRes.rows[0];
+
+    // Query active dispatches where status = 'DISPATCHED' for this supply
+    const dispatchRes = await client.query(
+      `SELECT COALESCE(SUM(qty_dispatched), 0)::int as active_dispatched
+       FROM dispatch_records
+       WHERE status = 'DISPATCHED'
+         AND (resource_type ILIKE '%' || $1 || '%' OR resource_type ILIKE '%' || $2 || '%')`,
+      [current.name, current.category]
+    );
+    const activeDispatched = parseInt(dispatchRes.rows[0]?.active_dispatched || '0', 10);
+    const committedAllocated = Math.max(current.allocated || 0, activeDispatched);
+
+    const targetQty = qty !== undefined ? parseInt(qty, 10) : current.qty;
+    if (isNaN(targetQty)) {
+      await client.query('ROLLBACK');
+      res.status(400).json({ success: false, error: 'Quantity must be a valid integer.' });
+      return;
+    }
+    if (targetQty < 0) {
+      await client.query('ROLLBACK');
+      res.status(400).json({ success: false, error: 'Quantity cannot be negative.' });
+      return;
+    }
+
+    // CRITICAL BUSINESS RULE: NEW TOTAL >= CURRENTLY ALLOCATED
+    if (targetQty < committedAllocated) {
+      await client.query('ROLLBACK');
+      res.status(400).json({
+        success: false,
+        error: `Supply quantity cannot be reduced below ${committedAllocated} — ${committedAllocated} ${current.unit || 'units'} are currently allocated/committed.`,
+        allocated: committedAllocated,
+        requestedQuantity: targetQty,
+      });
+      return;
+    }
+
+    const targetDemand = demand !== undefined ? parseInt(demand, 10) : current.demand;
+    const targetLocation = location !== undefined ? location : current.location;
+
+    const updateRes = await client.query(
+      `UPDATE supplies
+       SET qty = $1,
+           allocated = $2,
+           demand = $3,
+           location = $4,
+           last_sync = to_char(CURRENT_TIMESTAMP, 'HH24:MI'),
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $5
+       RETURNING id, name, category, qty, allocated,
+         (qty - allocated) as available, demand, unit, location,
+         last_sync as "lastSync", updated_at`,
+      [targetQty, committedAllocated, targetDemand, targetLocation, id]
+    );
+
+    await client.query('COMMIT');
+    res.json({ success: true, data: updateRes.rows[0] });
+  } catch (err: any) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('[Resources Error] PATCH /supplies/:id:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// PATCH /api/resources/equipment/:id
+resourcesRouter.patch('/equipment/:id', async (req: Request, res: Response): Promise<void> => {
+  const client = await pool.connect();
+  try {
+    const { id } = req.params;
+    const { qty, location } = req.body;
+
+    await client.query('BEGIN');
+
+    const currentRes = await client.query('SELECT * FROM equipment WHERE id = $1 FOR UPDATE', [id]);
+    if (currentRes.rowCount === 0) {
+      await client.query('ROLLBACK');
+      res.status(404).json({ success: false, error: `Equipment item ${id} not found.` });
+      return;
+    }
+
+    const current = currentRes.rows[0];
+
+    // Query active dispatches for this equipment
+    const dispatchRes = await client.query(
+      `SELECT COALESCE(SUM(qty_dispatched), 0)::int as active_dispatched
+       FROM dispatch_records
+       WHERE status = 'DISPATCHED'
+         AND (resource_type ILIKE '%' || $1 || '%' OR unit ILIKE '%' || $1 || '%')`,
+      [current.name]
+    );
+    const activeDispatched = parseInt(dispatchRes.rows[0]?.active_dispatched || '0', 10);
+    const currentInUse = Math.max(0, current.qty - current.available);
+    const committedAllocated = Math.max(currentInUse, activeDispatched);
+
+    const targetQty = qty !== undefined ? parseInt(qty, 10) : current.qty;
+    if (isNaN(targetQty)) {
+      await client.query('ROLLBACK');
+      res.status(400).json({ success: false, error: 'Quantity must be a valid integer.' });
+      return;
+    }
+    if (targetQty < 0) {
+      await client.query('ROLLBACK');
+      res.status(400).json({ success: false, error: 'Quantity cannot be negative.' });
+      return;
+    }
+
+    // CRITICAL BUSINESS RULE: NEW TOTAL >= CURRENTLY ALLOCATED
+    if (targetQty < committedAllocated) {
+      await client.query('ROLLBACK');
+      res.status(400).json({
+        success: false,
+        error: `Equipment quantity cannot be reduced below ${committedAllocated} — ${committedAllocated} units are currently allocated/in use.`,
+        allocated: committedAllocated,
+        requestedQuantity: targetQty,
+      });
+      return;
+    }
+
+    const newAvailable = targetQty - committedAllocated;
+    const newStatus = newAvailable <= 0 ? 'DEPLETED' : newAvailable < targetQty ? 'PARTIAL' : 'AVAILABLE';
+    const targetLocation = location !== undefined ? location : current.location;
+
+    const updateRes = await client.query(
+      `UPDATE equipment
+       SET qty = $1,
+           available = $2,
+           status = $3,
+           location = $4,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $5
+       RETURNING id, name, qty, available, (qty - available) as allocated, status, location, updated_at`,
+      [targetQty, newAvailable, newStatus, targetLocation, id]
+    );
+
+    await client.query('COMMIT');
+    res.json({ success: true, data: updateRes.rows[0] });
+  } catch (err: any) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('[Resources Error] PATCH /equipment/:id:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  } finally {
+    client.release();
+  }
+});
+

@@ -31,7 +31,7 @@ commandRouter.get('/overview', async (req: Request, res: Response): Promise<void
           i.id, i.title, i.type, i.severity, i.location, i.latitude as lat, i.longitude as lng,
           i.latitude, i.longitude, i.status, i.responders_count as responders, i.pending,
           i.assigned_responder_id, i.source, i.source_reference, i.description,
-          i.affected_people, i.verification_status, i.category,
+          i.affected_people, i.verification_status, i.category, i.shelter_id,
           COALESCE(COUNT(r.id), 0)::int AS reports_count,
           i.created_at as "createdAt", i.updated_at as "updatedAt"
         FROM incidents i
