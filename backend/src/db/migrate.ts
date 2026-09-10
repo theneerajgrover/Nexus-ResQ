@@ -117,6 +117,10 @@ export async function runMigration() {
     const { runWarningHistoryMigration } = await import('./migrate_warning_history');
     await runWarningHistoryMigration();
 
+    // Step 5b: Run Production Location System schema enhancements
+    const { runLocationSystemMigration } = await import('./migrate_location_system');
+    await runLocationSystemMigration();
+
     // Step 6: Run AI Orchestration & Human Approval schema enhancements
     const { runOrchestrationApprovalMigration } = await import('./migrate_orchestration_approval');
     await runOrchestrationApprovalMigration();

@@ -835,25 +835,47 @@ export class AgentOrchestratorService {
     console.log(`[Orchestrator] Human Decision received for ${planId}: ${decision} by ${reviewer}`);
 
     // 1. Resolve canonical plan, approval, and incident records across tables
-    const [appRes, planRes, recLookupRes] = await Promise.all([
+    let [appRes, planRes, recLookupRes] = await Promise.all([
       query(`SELECT * FROM approvals WHERE approval_id = $1 OR plan_id = $1 ORDER BY created_at DESC LIMIT 1`, [planId]),
       query(`SELECT * FROM orchestration_plans WHERE plan_id = $1 OR id = $1 OR approval_id = $1 ORDER BY created_at DESC LIMIT 1`, [planId]),
       query(`SELECT * FROM ai_recommendations WHERE id = $1 ORDER BY created_at DESC LIMIT 1`, [planId]),
     ]);
 
-    const appRow = appRes.rows[0];
+    let appRow = appRes.rows[0];
     const planRow = planRes.rows[0];
     const recRow = recLookupRes.rows[0];
 
     const canonicalPlanId = appRow?.plan_id || planRow?.plan_id || recRow?.id || planId;
-    const canonicalApprovalId = appRow?.approval_id || planRow?.approval_id;
+    let canonicalApprovalId = appRow?.approval_id || planRow?.approval_id;
     const canonicalExecId = planRow?.id;
     const incidentId = appRow?.incident_id || planRow?.incident_id || recRow?.incident_id || 'INC-2849';
     const currentApprovalStatus = appRow?.status;
     const currentPlanStatus = planRow?.status;
 
+    // Ensure approval record exists in approvals table if missing
+    if (!appRow && (planRow || recRow)) {
+      canonicalApprovalId = canonicalApprovalId || `APP-${Date.now().toString().slice(-6)}`;
+      const insApp = await query(`
+        INSERT INTO approvals (approval_id, incident_id, plan_id, requested_by, approval_type, status, expires_at)
+        VALUES ($1, $2, $3, 'AI_ORCHESTRATOR', 'DISPATCH_PLAN', 'PENDING', CURRENT_TIMESTAMP + interval '4 hours')
+        ON CONFLICT (approval_id) DO UPDATE SET updated_at = CURRENT_TIMESTAMP
+        RETURNING *
+      `, [canonicalApprovalId, incidentId, canonicalPlanId]).catch(() => ({ rowCount: 0, rows: [] }));
+      if (insApp.rowCount && insApp.rowCount > 0) {
+        appRow = insApp.rows[0];
+      }
+    }
+
     // 2. IDEMPOTENCY & STALE DATA PROTECTION
-    if (currentApprovalStatus === 'APPROVED' || currentPlanStatus === 'APPROVED' || currentPlanStatus === 'EXECUTING' || currentPlanStatus === 'COMPLETE') {
+    const isAlreadyApproved =
+      currentApprovalStatus === 'APPROVED' ||
+      planRow?.approval_status === 'APPROVED' ||
+      currentPlanStatus === 'APPROVED' ||
+      currentPlanStatus === 'EXECUTING' ||
+      currentPlanStatus === 'MONITORING' ||
+      currentPlanStatus === 'COMPLETE';
+
+    if (isAlreadyApproved) {
       if (decision === 'APPROVED') {
         console.log(`[Orchestrator] Idempotent hit: Plan ${canonicalPlanId} is already APPROVED. Returning existing state.`);
         return {
@@ -869,7 +891,7 @@ export class AgentOrchestratorService {
       throw new Error(`Plan ${canonicalPlanId} has already been APPROVED and executed; cannot change to ${decision}.`);
     }
 
-    if (currentApprovalStatus === 'REJECTED' || currentPlanStatus === 'REJECTED') {
+    if (currentApprovalStatus === 'REJECTED' || currentPlanStatus === 'REJECTED' || planRow?.approval_status === 'REJECTED') {
       if (decision === 'REJECTED') {
         return {
           success: true,
@@ -908,8 +930,8 @@ export class AgentOrchestratorService {
     const incDetailsRes = await query(`SELECT * FROM incidents WHERE id = $1`, [incidentId]);
     const incRow = incDetailsRes.rows[0] || {};
 
-    let assignedUnitName = 'Alpha-14 SAR Unit';
-    let assignedRespId = 'R-14';
+    let assignedUnitName = '';
+    let assignedRespId = '';
     let dispatchId = `DSP-${Date.now().toString().slice(-4)}`;
 
     // 4. TRANSACTION-SAFE DATABASE MUTATIONS
@@ -1007,7 +1029,7 @@ export class AgentOrchestratorService {
       `, [canonicalPlanId, canonicalApprovalId || canonicalPlanId, incidentId]);
 
       if (decision === 'APPROVED') {
-        // E. Find available responder or use existing assignment
+        // E. Find available responder or use existing assignment (real database units only)
         const existingResp = await client.query(`
           SELECT id, name FROM responders WHERE current_incident_id = $1 LIMIT 1
         `, [incidentId]);
@@ -1031,8 +1053,12 @@ export class AgentOrchestratorService {
               WHERE id = $2
             `, [incidentId, resp.id]);
             console.log(`[DB Mutation] Responder ${resp.name} (${resp.id}) set to ASSIGNED for ${incidentId}`);
+          } else {
+            throw new Error('Resource shortage: No responders are currently available for automatic dispatch. Please release active units or await mission conclusion.');
           }
         }
+
+        const formattedUnitName = assignedUnitName.startsWith('Unit ') ? assignedUnitName : `Unit ${assignedUnitName}`;
 
         // F. Create / Update missions record
         const missionId = `MSN-${incidentId.replace(/[^0-9]/g, '') || Date.now().toString().slice(-4)}`;
@@ -1065,7 +1091,7 @@ export class AgentOrchestratorService {
           missionLng,
           incRow.severity || 'HIGH',
           [incRow.type || 'GENERAL'],
-          `Unit ${assignedUnitName} dispatched via human authorization.`
+          `${formattedUnitName} automatically dispatched via human authorization.`
         ]);
 
         // G. Update emergency_requests and incidents tables
@@ -1077,21 +1103,35 @@ export class AgentOrchestratorService {
 
         await client.query(`
           UPDATE incidents 
-          SET assigned_responder_id = $1, status = 'RESPONDING', responders_count = responders_count + 1, pending = FALSE, updated_at = CURRENT_TIMESTAMP 
+          SET assigned_responder_id = $1, status = 'RESPONDING', responders_count = GREATEST(1, responders_count + 1), pending = FALSE, updated_at = CURRENT_TIMESTAMP 
           WHERE id = $2
         `, [assignedRespId, incidentId]);
 
-        // H. Record transition in incident_status_history
+        // H. Record transitions in incident_status_history (Approval + Dispatch events)
+        const histId1 = `HIST-${Date.now()}-APP`;
+        await client.query(`
+          INSERT INTO incident_status_history (id, request_id, incident_id, previous_status, new_status, actor, notes, created_at)
+          VALUES ($1, $2, $3, $4, 'APPROVED', $5, $6, CURRENT_TIMESTAMP)
+        `, [
+          histId1,
+          incRow.request_id || null,
+          incidentId,
+          incRow.status || 'PENDING',
+          reviewer,
+          `Response plan ${canonicalPlanId} authorized by Command Authority.`
+        ]);
+
+        const histId2 = `HIST-${Date.now()}-DSP`;
         await client.query(`
           INSERT INTO incident_status_history (id, request_id, incident_id, previous_status, new_status, actor, responder_id, notes, created_at)
-          VALUES ($1, $2, $3, 'ACCEPTED', 'ASSIGNED', $4, $5, $6, CURRENT_TIMESTAMP)
+          VALUES ($1, $2, $3, 'APPROVED', 'DISPATCHED', $4, $5, $6, CURRENT_TIMESTAMP)
         `, [
-          `HIST-${Date.now()}`,
+          histId2,
           incRow.request_id || null,
           incidentId,
           reviewer,
           assignedRespId,
-          `Authority approved dispatch plan. Assigned unit ${assignedUnitName}.`
+          `Automatic dispatch triggered. ${formattedUnitName} deployed to scene.`
         ]);
 
         // I. Dispatch available ambulance
@@ -1106,10 +1146,10 @@ export class AgentOrchestratorService {
             UPDATE ambulances 
             SET status = 'DISPATCHED', last_update = 'Dispatched to ' || $1, updated_at = CURRENT_TIMESTAMP
             WHERE id = $2
-          `, [rec?.affected_zone || incidentId, amb.id]);
+          `, [rec?.affected_zone || incRow.location || incidentId, amb.id]);
         }
 
-        // J. Allocate equipment in database
+        // J. Allocate equipment in database (bounds checked, never negative)
         const availEqp = await client.query(`
           SELECT id, name, available FROM equipment 
           WHERE available > 0 
@@ -1146,18 +1186,21 @@ export class AgentOrchestratorService {
           `, [newOcc, shl.id]);
         }
 
-        // L. Insert dispatch_records
+        // L. Insert real dispatch_records
+        const teamQty = Number(rec?.recommended_teams_count) || 1;
         await client.query(`
           INSERT INTO dispatch_records (
             id, resource_type, qty_approved, qty_dispatched, destination, incident_id, unit, status, approved_by
           )
-          VALUES ($1, $2, 2, 2, $3, $4, $5, 'DISPATCHED', $6)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, 'DISPATCHED', $8)
         `, [
           dispatchId,
           rec?.recommended_resource || 'HEAVY RESCUE UNIT',
-          rec?.affected_zone || 'Disaster Sector',
+          teamQty,
+          teamQty,
+          incRow.location || rec?.affected_zone || 'Disaster Sector',
           incidentId,
-          assignedUnitName,
+          formattedUnitName,
           reviewer,
         ]);
 
@@ -1168,9 +1211,21 @@ export class AgentOrchestratorService {
         `, [
           `AUD-${Date.now().toString().slice(-6)}`,
           reviewer,
-          JSON.stringify({ planId: canonicalPlanId, incidentId, assignedUnitName, dispatchId }),
+          JSON.stringify({ planId: canonicalPlanId, incidentId, assignedUnit: formattedUnitName, dispatchId }),
         ]);
       } else if (decision === 'REJECTED') {
+        await client.query(`
+          INSERT INTO incident_status_history (id, request_id, incident_id, previous_status, new_status, actor, notes, created_at)
+          VALUES ($1, $2, $3, $4, 'REJECTED', $5, $6, CURRENT_TIMESTAMP)
+        `, [
+          `HIST-${Date.now()}-REJ`,
+          incRow.request_id || null,
+          incidentId,
+          incRow.status || 'PENDING',
+          reviewer,
+          comments || 'Response plan rejected by Command Authority.'
+        ]);
+
         await client.query(`
           INSERT INTO audit_logs (id, actor, action, entity, metadata)
           VALUES ($1, $2, 'PLAN_REJECTED', 'orchestration_plans', $3)
