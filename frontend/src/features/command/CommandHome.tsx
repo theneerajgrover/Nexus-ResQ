@@ -9,7 +9,7 @@ import ReportIncidentModal from '../../components/incident/ReportIncidentModal';
 // + Authority (regional intelligence, AI analysis, evacuation approval)
 
 type OrbitalMode = 'OBSERVE' | 'RESPOND' | 'EVACUATE' | 'RESOURCES' | 'INTELLIGENCE';
-type CommandTab = 'home' | 'sphere' | 'intelligence' | 'evacuation' | 'incidents' | 'dispatch';
+type CommandTab = 'home' | 'sphere' | 'intelligence' | 'incidents' | 'dispatch';
 type ApprovalState = 'PENDING_APPROVAL' | 'APPROVED' | 'REJECTED' | 'REPLANNING';
 
 const modeColors: Record<OrbitalMode, string> = {
@@ -2194,79 +2194,7 @@ function IntelligenceTab({
   );
 }
 
-// ── Evacuation tab ────────────────────────────────────────────────────────────
-function EvacuationTab() {
-  const [approved, setApproved] = useState(false);
-  const routes = [
-    { id: 'A', label: 'Zone 4A — River Road → Hwy 12 North', status: 'CLEAR', capacity: '4,000/hr', congestion: 'LIGHT', shelter: 'Central Community Center', color: '#10b981' },
-    { id: 'B', label: 'Zone 4B — Bridge Access → East Service', status: 'CONGESTED', capacity: '2,200/hr', congestion: 'MODERATE', shelter: 'Riverside High School', color: '#f59e0b' },
-  ];
-  return (
-    <div className="h-full flex flex-col gap-4 overflow-hidden">
-      {!approved ? (
-        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="p-5 rounded-xl shrink-0"
-          style={{ background: 'rgba(245,158,11,0.06)', border: '2px solid rgba(245,158,11,0.35)' }}>
-          <div className="font-mono text-xs tracking-widest text-amber-400 mb-2">⚠ EVACUATION APPROVAL REQUIRED</div>
-          <div className="font-condensed font-black text-lg text-white mb-1">Zone NE-4 — Bridge Sector</div>
-          <div className="font-mono text-xs text-white/50 mb-3 leading-relaxed">
-            AI recommends mandatory evacuation. Structural risk HIGH. Est. affected: 4,200. 2 safe routes identified. 3 shelters with capacity.
-          </div>
-          <div className="flex gap-3">
-            <motion.button onClick={async () => {
-              try {
-                await commandApi.takeRecommendationAction('rec-2', 'APPROVE', 'Evacuation order confirmed for Zone NE-4');
-              } catch (e) {
-                console.error(e);
-              }
-              setApproved(true);
-            }}
-              className="flex-1 py-3 rounded-xl font-condensed font-black text-base tracking-widest"
-              style={{ background: '#f59e0b', color: '#080b0f' }} whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
-              APPROVE EVACUATION ORDER
-            </motion.button>
-            <button className="px-5 py-3 rounded-xl font-condensed font-bold text-sm tracking-widest"
-              style={{ background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.4)', border: '1px solid rgba(255,255,255,0.08)' }}>
-              DEFER
-            </button>
-          </div>
-        </motion.div>
-      ) : (
-        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="p-4 rounded-xl shrink-0"
-          style={{ background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.3)' }}>
-          <div className="font-condensed font-bold text-sm tracking-widest" style={{ color: '#10b981' }}>
-            ✓ EVACUATION ORDER ISSUED — Zone NE-4
-          </div>
-          <div className="font-mono text-xs text-white/40 mt-1">Public alerts dispatched · Routes activated · Shelters notified</div>
-        </motion.div>
-      )}
-      <div className="flex-1 flex gap-4 overflow-hidden">
-        {routes.map((r) => (
-          <div key={r.id} className="flex-1 p-4 rounded-xl flex flex-col gap-3"
-            style={{ background: `${r.color}06`, border: `1px solid ${r.color}25` }}>
-            <div className="flex items-center gap-2">
-              <div className="w-2 h-2 rounded-full" style={{ background: r.color }} />
-              <div className="font-condensed font-bold text-sm" style={{ color: r.color }}>ROUTE {r.id}</div>
-              <div className="font-mono text-xs ml-auto" style={{ color: r.color }}>{r.status}</div>
-            </div>
-            <div className="font-mono text-xs text-white/50 leading-relaxed">{r.label}</div>
-            <div className="space-y-2">
-              {[
-                { label: 'THROUGHPUT', value: r.capacity },
-                { label: 'CONGESTION', value: r.congestion },
-                { label: 'SHELTER', value: r.shelter },
-              ].map((item) => (
-                <div key={item.label} className="flex items-center justify-between py-1.5 border-b border-white/[0.04]">
-                  <div className="font-mono text-xs text-white/30">{item.label}</div>
-                  <div className="font-mono text-xs text-white/60">{item.value}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
+
 
 // ── Operations tab ────────────────────────────────────────────────────────────
 function OperationsTab({ respondersList }: { respondersList?: any[] }) {
@@ -3338,7 +3266,6 @@ export default function CommandHome() {
   const tab: CommandTab =
     location.pathname === '/command/orbit' ? 'sphere' :
     location.pathname.startsWith('/command/intelligence') ? 'intelligence' :
-    location.pathname.startsWith('/command/evacuation') ? 'evacuation' :
     location.pathname.startsWith('/command/incidents') ? 'incidents' :
     location.pathname.startsWith('/command/dispatch') ? 'dispatch' : 'home';
 
@@ -3664,7 +3591,6 @@ export default function CommandHome() {
                     isOrchestrating={isOrchestrating}
                   />
                 )}
-                {tab === 'evacuation' && <EvacuationTab />}
                 {tab === 'incidents' && <IncidentsTab incidentsList={liveIncidents} historyList={liveHistory} onRefresh={fetchPredictiveData} />}
                 {tab === 'dispatch' && <DispatchTab incidentsList={liveIncidents} respondersList={liveResponders} dispatchesList={liveDispatches} />}
               </div>
