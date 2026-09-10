@@ -413,13 +413,23 @@ export class AgentOrchestratorService {
         query(`SELECT * FROM equipment WHERE available > 0 ORDER BY available DESC`),
       ]);
 
-      const primaryResponder = availResponders.rows[0] || { id: 'R-14', name: 'Alpha-14 SAR Unit', status: 'AVAILABLE' };
-      const primaryAmbulance = availAmbulances.rows[0] || { id: 'AMB-14', callsign: 'MEDIC 14', status: 'AVAILABLE' };
-      const primaryEquipment = availEquipment.rows[0] || { id: 'EQP-01', name: 'Hydraulic Rescue Sets', available: 5 };
+      let primaryResponder = null;
+      if (incident.assigned_responder_id) {
+        const existResp = await query(`SELECT * FROM responders WHERE id = $1`, [incident.assigned_responder_id]);
+        if (existResp.rowCount && existResp.rowCount > 0) {
+          primaryResponder = existResp.rows[0];
+        }
+      }
+      if (!primaryResponder && availResponders.rows.length > 0) {
+        primaryResponder = availResponders.rows[0];
+      }
+      const primaryAmbulance = availAmbulances.rows.length > 0 ? availAmbulances.rows[0] : null;
+      const primaryEquipment = availEquipment.rows.length > 0 ? availEquipment.rows[0] : null;
 
       context.resource = {
         availableRespondersCount: availResponders.rowCount || 0,
         availableAmbulancesCount: availAmbulances.rowCount || 0,
+        availableEquipmentCount: availEquipment.rowCount || 0,
         assignedResponder: primaryResponder,
         assignedAmbulance: primaryAmbulance,
         assignedEquipment: primaryEquipment,
@@ -430,7 +440,9 @@ export class AgentOrchestratorService {
         'RESOURCE',
         'COMPLETE',
         100,
-        `Matched Unit ${primaryResponder.name} & ${primaryAmbulance.callsign} (${availResponders.rowCount} units, ${availAmbulances.rowCount} medics available in DB)`,
+        primaryResponder
+          ? `Matched Unit ${primaryResponder.name} & ${primaryAmbulance ? primaryAmbulance.callsign : 'Staged'} (${availResponders.rowCount} units, ${availAmbulances.rowCount} medics available in DB)`
+          : `Asset check: 0 available tactical units in DB (${availAmbulances.rowCount} medics, ${availEquipment.rowCount} equipment items available)`,
         context.resource
       );
 
@@ -440,21 +452,16 @@ export class AgentOrchestratorService {
 
       const sheltersRes = await query(`
         SELECT * FROM shelters 
-        WHERE status IN ('OPEN', 'ACTIVATING') 
+        WHERE status IN ('OPEN', 'ACTIVATING') AND (capacity - occupancy) > 0
         ORDER BY (capacity - occupancy) DESC LIMIT 3
       `);
-      const assignedShelter = sheltersRes.rows[0] || {
-        id: 'SHL-01',
-        name: 'Central Community Center',
-        capacity: 450,
-        occupancy: 263,
-      };
-      const shelterHeadroom = Math.max(0, assignedShelter.capacity - assignedShelter.occupancy);
+      const assignedShelter = sheltersRes.rows.length > 0 ? sheltersRes.rows[0] : null;
+      const shelterHeadroom = assignedShelter ? Math.max(0, assignedShelter.capacity - assignedShelter.occupancy) : 0;
 
       context.capacity = {
         shelter: assignedShelter,
-        capacity: assignedShelter.capacity,
-        occupancy: assignedShelter.occupancy,
+        capacity: assignedShelter ? assignedShelter.capacity : 0,
+        occupancy: assignedShelter ? assignedShelter.occupancy : 0,
         availableHeadroom: shelterHeadroom,
       };
       await updateAgentState(
@@ -463,7 +470,9 @@ export class AgentOrchestratorService {
         'CAPACITY',
         'COMPLETE',
         100,
-        `Assigned ${assignedShelter.name} — Headroom: ${shelterHeadroom} available (${assignedShelter.occupancy}/${assignedShelter.capacity} occupied)`,
+        assignedShelter
+          ? `Assigned ${assignedShelter.name} — Headroom: ${shelterHeadroom} available (${assignedShelter.occupancy}/${assignedShelter.capacity} occupied)`
+          : `Capacity review: No open shelters with available headroom found in DB`,
         context.capacity
       );
 
@@ -479,16 +488,16 @@ export class AgentOrchestratorService {
         ? Number(incident.longitude)
         : null;
 
-      const respLat = primaryResponder.latitude !== null && primaryResponder.latitude !== undefined && !isNaN(Number(primaryResponder.latitude))
+      const respLat = primaryResponder && primaryResponder.latitude !== null && primaryResponder.latitude !== undefined && !isNaN(Number(primaryResponder.latitude))
         ? Number(primaryResponder.latitude)
         : null;
-      const respLng = primaryResponder.longitude !== null && primaryResponder.longitude !== undefined && !isNaN(Number(primaryResponder.longitude))
+      const respLng = primaryResponder && primaryResponder.longitude !== null && primaryResponder.longitude !== undefined && !isNaN(Number(primaryResponder.longitude))
         ? Number(primaryResponder.longitude)
         : null;
 
       const destCoords = {
-        lat: incLat !== null ? incLat : (respLat !== null ? respLat + 0.012 : 0),
-        lng: incLng !== null ? incLng : (respLng !== null ? respLng - 0.015 : 0),
+        lat: incLat !== null ? incLat : (respLat !== null ? respLat + 0.012 : 28.6139),
+        lng: incLng !== null ? incLng : (respLng !== null ? respLng - 0.015 : 77.2090),
       };
 
       const originCoords = {
@@ -520,7 +529,7 @@ export class AgentOrchestratorService {
       await persistActiveRoute(
         incident.id,
         incident.request_id || null,
-        primaryResponder.id,
+        primaryResponder ? primaryResponder.id : null,
         originCoords,
         destCoords,
         primaryRoute,
@@ -584,15 +593,56 @@ export class AgentOrchestratorService {
       await updateAgentState(9, 'Coordinator', 'COORDINATOR', 'RUNNING', 60, `Synthesizing integrated multi-agency tactical response plan...`);
       await sleep(380);
 
-      const planAction = `Deploy ${primaryResponder.name} & ${primaryAmbulance.callsign} to ${incident.location}`;
-      const planReason = `Compounding ${incident.type.toLowerCase()} threat at ${incident.location} with ${incident.severity} severity. Deploy extrication team via ${primaryRoute.label} (${primaryRoute.safetyStatus}) and direct evacuees to ${assignedShelter.name}.`;
-      const proposedActions = [
-        `Dispatch ${primaryResponder.name} via ${primaryRoute.label} (ETA ${primaryRoute.etaFormatted}, Status: ${primaryRoute.safetyStatus})`,
-        `Pre-position ${primaryAmbulance.callsign} at emergency medical triage staging zone`,
-        `Establish ${perimeterMeters}m exclusion perimeter around ${incident.location}`,
-        `Direct up to ${affectedPop} evacuees to ${assignedShelter.name} (${shelterHeadroom} spaces available)`,
-        `Mobilize ${primaryEquipment.name} specialized extrication asset`,
-      ];
+      const isShelterOnly = (incident.type === 'EVACUATION' || incident.type === 'SHELTER_NEEDED') && incident.severity !== 'CRITICAL';
+      const isSupplyOnly = incident.type === 'SUPPLY_REQUEST' || incident.type === 'LOGISTICS';
+      const requiresResponder = !isShelterOnly && !isSupplyOnly;
+      const requiresAmbulance = (incident.casualties && Number(incident.casualties) > 0) || incident.severity === 'CRITICAL';
+      const requiresShelter = (affectedPop > 0) || incident.type === 'EVACUATION' || incident.type === 'FLOOD' || incident.type === 'EARTHQUAKE';
+      const requiresEquipment = incident.severity === 'CRITICAL' || incident.severity === 'HIGH';
+
+      let planAction = '';
+      if (primaryResponder) {
+        planAction = `Deploy ${primaryResponder.name}${primaryAmbulance ? ` & ${primaryAmbulance.callsign}` : ''} to ${incident.location}`;
+      } else if (requiresResponder) {
+        planAction = `Tactical Dispatch: Awaiting available responder unit for ${incident.location}`;
+      } else if (assignedShelter) {
+        planAction = `Authorize evacuee shelter intake at ${assignedShelter.name}`;
+      } else {
+        planAction = `Authorize relief logistics & resource mobilization for ${incident.location}`;
+      }
+
+      const planReason = `Compounding ${incident.type.toLowerCase()} threat at ${incident.location} with ${incident.severity} severity. ${
+        primaryResponder
+          ? `Deploy tactical team via ${primaryRoute.label} (${primaryRoute.safetyStatus})${assignedShelter ? ` and direct evacuees to ${assignedShelter.name}` : ''}.`
+          : requiresResponder
+          ? `Tactical responder required. Currently awaiting available units in database.`
+          : `Direct operational logistics and emergency accommodations.`
+      }`;
+
+      const proposedActions: string[] = [];
+      if (primaryResponder) {
+        proposedActions.push(`Dispatch ${primaryResponder.name} via ${primaryRoute.label} (ETA ${primaryRoute.etaFormatted}, Status: ${primaryRoute.safetyStatus})`);
+      } else if (requiresResponder) {
+        proposedActions.push(`Alert field command: No rescue teams currently available in database (dispatch queued)`);
+      }
+
+      if (primaryAmbulance) {
+        proposedActions.push(`Pre-position ${primaryAmbulance.callsign} at emergency medical triage staging zone`);
+      } else if (requiresAmbulance) {
+        proposedActions.push(`Request mutual aid ambulance dispatch (0 units in database)`);
+      }
+
+      proposedActions.push(`Establish ${perimeterMeters}m exclusion perimeter around ${incident.location}`);
+
+      if (assignedShelter && shelterHeadroom > 0) {
+        proposedActions.push(`Direct up to ${affectedPop} evacuees to ${assignedShelter.name} (${shelterHeadroom} spaces available)`);
+      } else if (requiresShelter) {
+        proposedActions.push(`Alert municipal emergency shelter coordination: Headroom constrained`);
+      }
+
+      if (primaryEquipment) {
+        proposedActions.push(`Mobilize ${primaryEquipment.name} specialized extrication asset`);
+      }
 
       context.coordinator = {
         planAction,
@@ -605,7 +655,9 @@ export class AgentOrchestratorService {
         'COORDINATOR',
         'COMPLETE',
         100,
-        `Synthesized 5 tactical actions: Deployment of ${primaryResponder.name} via ${primaryRoute.label}`,
+        primaryResponder
+          ? `Synthesized tactical plan: Deployment of ${primaryResponder.name} via ${primaryRoute.label}`
+          : `Synthesized tactical plan: Resource review completed for ${incident.location}`,
         context.coordinator
       );
 
@@ -613,21 +665,52 @@ export class AgentOrchestratorService {
       await updateAgentState(10, 'Critic', 'CRITIC', 'RUNNING', 70, `Validating operational constraints, safety flags & resource feasibility...`);
       await sleep(380);
 
+      const riskFlags: string[] = [
+        `Active ${incident.type} hazard in localized sector`,
+        `Traffic channeled through ${primaryRoute.label} (${primaryRoute.safetyStatus})`,
+        `Critical mitigation window: ${criticalWindowMinutes} minutes`,
+        ...(primaryRoute.riskFactors || []),
+      ];
+
+      const constraintsChecked: string[] = [];
+      let hasShortage = false;
+
+      if (requiresResponder) {
+        if (primaryResponder) {
+          constraintsChecked.push(`Resource availability confirmed: ${primaryResponder.name} ready`);
+        } else {
+          hasShortage = true;
+          riskFlags.unshift(`[RESOURCE SHORTAGE] No available responder rescue teams in database`);
+          constraintsChecked.push(`Responder allocation: UNMET (0 available in database)`);
+        }
+      }
+
+      if (requiresAmbulance) {
+        if (primaryAmbulance) {
+          constraintsChecked.push(`Ambulance availability confirmed: ${primaryAmbulance.callsign} ready`);
+        } else {
+          riskFlags.push(`[RESOURCE WARNING] No ambulances available in database`);
+          constraintsChecked.push(`Ambulance allocation: LIMITED (0 available in database)`);
+        }
+      }
+
+      if (requiresShelter) {
+        if (assignedShelter && shelterHeadroom > 0) {
+          constraintsChecked.push(`Shelter headroom validated: ${assignedShelter.name} (${shelterHeadroom} available spaces)`);
+        } else {
+          riskFlags.push(`[RESOURCE WARNING] Shelter capacity constrained or no open shelters`);
+          constraintsChecked.push(`Shelter headroom: CONSTRAINED`);
+        }
+      }
+
+      constraintsChecked.push(`Route clearance verified: ${primaryRoute.label} (${primaryRoute.safetyStatus} - Score: ${primaryRoute.safetyScore}/100)`);
+      constraintsChecked.push(`Mandatory Human Supervision Gate armed`);
+
       const criticValidation = {
-        validation_status: 'PASSED',
-        confidence: 94.5,
-        risk_flags: [
-          `Active ${incident.type} hazard in localized sector`,
-          `Traffic channeled through ${primaryRoute.label} (${primaryRoute.safetyStatus})`,
-          `Critical mitigation window: ${criticalWindowMinutes} minutes`,
-          ...(primaryRoute.riskFactors || []),
-        ],
-        constraintsChecked: [
-          `Resource availability confirmed: ${primaryResponder.name} and ${primaryAmbulance.callsign} ready`,
-          `Shelter headroom validated: ${assignedShelter.name} (${shelterHeadroom} available spaces)`,
-          `Route clearance verified: ${primaryRoute.label} (${primaryRoute.safetyStatus} - Score: ${primaryRoute.safetyScore}/100)`,
-          `Mandatory Human Supervision Gate armed`,
-        ],
+        validation_status: hasShortage ? 'FLAGGED_SHORTAGE' : 'PASSED',
+        confidence: hasShortage ? 72.0 : 94.5,
+        risk_flags: riskFlags,
+        constraintsChecked,
         validation_timestamp: new Date().toISOString(),
       };
 
@@ -638,7 +721,9 @@ export class AgentOrchestratorService {
         'CRITIC',
         'COMPLETE',
         100,
-        `AI Confidence: 94.5% · Constraints verified · Route Safety: ${primaryRoute.safetyStatus} · Gate Armed`,
+        hasShortage
+          ? `Resource warning flagged · Critic confidence: 72.0% · Shortage detected in DB inventory`
+          : `AI Confidence: 94.5% · Constraints verified · Route Safety: ${primaryRoute.safetyStatus} · Gate Armed`,
         criticValidation
       );
 
@@ -667,18 +752,26 @@ export class AgentOrchestratorService {
       );
 
       // ── STAGE 12: PERSIST AI RECOMMENDATION & APPROVAL GATE ────────
+      const recResource = primaryResponder
+        ? (primaryAmbulance ? `${primaryResponder.name} + ${primaryAmbulance.callsign}` : primaryResponder.name)
+        : (primaryAmbulance ? primaryAmbulance.callsign : 'LOGISTICS_DIRECT');
+      const recShelter = assignedShelter ? assignedShelter.name : 'STAGING_AREA';
+
       await query(`
         INSERT INTO ai_recommendations (
           id, incident_id, priority, action, reason, affected_zone, estimated_people_affected,
           recommended_resource, recommended_shelter, recommended_teams_count, confidence_score,
           risk_flags, proposed_actions_list, status, critic_verification, validation_status, plan_version, cycle_number
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'PENDING_APPROVAL', $14, 'PASSED', $15, $16)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'PENDING_APPROVAL', $14, $15, $16, $17)
         ON CONFLICT (id) DO UPDATE
         SET action = EXCLUDED.action,
             reason = EXCLUDED.reason,
             confidence_score = EXCLUDED.confidence_score,
             status = 'PENDING_APPROVAL',
+            critic_verification = EXCLUDED.critic_verification,
+            validation_status = EXCLUDED.validation_status,
+            risk_flags = EXCLUDED.risk_flags,
             plan_version = EXCLUDED.plan_version,
             cycle_number = EXCLUDED.cycle_number,
             updated_at = CURRENT_TIMESTAMP
@@ -690,13 +783,14 @@ export class AgentOrchestratorService {
         planReason,
         incident.location,
         affectedPop,
-        `${primaryResponder.name} + ${primaryAmbulance.callsign}`,
-        assignedShelter.name,
-        2,
-        94.5,
+        recResource,
+        recShelter,
+        primaryResponder ? 1 : 0,
+        hasShortage ? 72.0 : 94.5,
         criticValidation.risk_flags,
         proposedActions,
         JSON.stringify(criticValidation),
+        hasShortage ? 'FLAGGED_SHORTAGE' : 'PASSED',
         planVersion,
         cycleNumber,
       ]);
@@ -1029,33 +1123,48 @@ export class AgentOrchestratorService {
       `, [canonicalPlanId, canonicalApprovalId || canonicalPlanId, incidentId]);
 
       if (decision === 'APPROVED') {
-        // E. Find available responder or use existing assignment (real database units only)
-        const existingResp = await client.query(`
-          SELECT id, name FROM responders WHERE current_incident_id = $1 LIMIT 1
-        `, [incidentId]);
+        // E. Determine plan requirements and validate availability from DB
+        const planActionLower = (rec?.action || '').toLowerCase();
+        const incTypeLower = (incRow?.type || '').toLowerCase();
+        const isShelterOrSupplyOnly =
+          (planActionLower.includes('shelter intake') || incTypeLower === 'shelter_needed' || incTypeLower === 'supply_request') &&
+          !planActionLower.includes('deploy') &&
+          !planActionLower.includes('dispatch');
+        const requiresResponder = !isShelterOrSupplyOnly;
 
-        if (existingResp.rowCount && existingResp.rowCount > 0) {
-          assignedUnitName = existingResp.rows[0].name;
-          assignedRespId = existingResp.rows[0].id;
-        } else {
-          const availResp = await client.query(`
-            SELECT id, name, latitude, longitude FROM responders 
-            WHERE status = 'AVAILABLE' 
-            ORDER BY id ASC LIMIT 1
-          `);
-          if (availResp.rowCount && availResp.rowCount > 0) {
-            const resp = availResp.rows[0];
-            assignedUnitName = resp.name;
-            assignedRespId = resp.id;
-            await client.query(`
-              UPDATE responders 
-              SET status = 'ASSIGNED', current_incident_id = $1, updated_at = CURRENT_TIMESTAMP
-              WHERE id = $2
-            `, [incidentId, resp.id]);
-            console.log(`[DB Mutation] Responder ${resp.name} (${resp.id}) set to ASSIGNED for ${incidentId}`);
+        if (requiresResponder) {
+          // Find available responder or use existing assignment (real database units only)
+          const existingResp = await client.query(`
+            SELECT id, name FROM responders WHERE current_incident_id = $1 LIMIT 1
+          `, [incidentId]);
+
+          if (existingResp.rowCount && existingResp.rowCount > 0) {
+            assignedUnitName = existingResp.rows[0].name;
+            assignedRespId = existingResp.rows[0].id;
           } else {
-            throw new Error('Resource shortage: No responders are currently available for automatic dispatch. Please release active units or await mission conclusion.');
+            const availResp = await client.query(`
+              SELECT id, name, latitude, longitude FROM responders 
+              WHERE status = 'AVAILABLE' 
+              ORDER BY id ASC LIMIT 1
+              FOR UPDATE
+            `);
+            if (availResp.rowCount && availResp.rowCount > 0) {
+              const resp = availResp.rows[0];
+              assignedUnitName = resp.name;
+              assignedRespId = resp.id;
+              await client.query(`
+                UPDATE responders 
+                SET status = 'ASSIGNED', current_incident_id = $1, updated_at = CURRENT_TIMESTAMP
+                WHERE id = $2
+              `, [incidentId, resp.id]);
+              console.log(`[DB Mutation] Responder ${resp.name} (${resp.id}) set to ASSIGNED for ${incidentId}`);
+            } else {
+              throw new Error('Resource shortage: No responders are currently available for automatic dispatch. Please release active units or await mission conclusion.');
+            }
           }
+        } else {
+          assignedUnitName = 'Logistics Staging Team';
+          assignedRespId = '';
         }
 
         const formattedUnitName = assignedUnitName.startsWith('Unit ') ? assignedUnitName : `Unit ${assignedUnitName}`;
@@ -1084,7 +1193,7 @@ export class AgentOrchestratorService {
         `, [
           missionId,
           incidentId,
-          assignedRespId,
+          assignedRespId || null,
           `Operational Mission for ${incidentId}`,
           incRow.location || 'Incident Area',
           missionLat,
@@ -1095,17 +1204,25 @@ export class AgentOrchestratorService {
         ]);
 
         // G. Update emergency_requests and incidents tables
-        await client.query(`
-          UPDATE emergency_requests 
-          SET assigned_responder_id = $1, status = 'ASSIGNED', updated_at = CURRENT_TIMESTAMP 
-          WHERE incident_id = $2
-        `, [assignedRespId, incidentId]);
+        if (assignedRespId) {
+          await client.query(`
+            UPDATE emergency_requests 
+            SET assigned_responder_id = $1, status = 'ASSIGNED', updated_at = CURRENT_TIMESTAMP 
+            WHERE incident_id = $2
+          `, [assignedRespId, incidentId]);
 
-        await client.query(`
-          UPDATE incidents 
-          SET assigned_responder_id = $1, status = 'RESPONDING', responders_count = GREATEST(1, responders_count + 1), pending = FALSE, updated_at = CURRENT_TIMESTAMP 
-          WHERE id = $2
-        `, [assignedRespId, incidentId]);
+          await client.query(`
+            UPDATE incidents 
+            SET assigned_responder_id = $1, status = 'RESPONDING', responders_count = GREATEST(1, responders_count + 1), pending = FALSE, updated_at = CURRENT_TIMESTAMP 
+            WHERE id = $2
+          `, [assignedRespId, incidentId]);
+        } else {
+          await client.query(`
+            UPDATE incidents 
+            SET status = 'RESPONDING', pending = FALSE, updated_at = CURRENT_TIMESTAMP 
+            WHERE id = $1
+          `, [incidentId]);
+        }
 
         // H. Record transitions in incident_status_history (Approval + Dispatch events)
         const histId1 = `HIST-${Date.now()}-APP`;
@@ -1130,7 +1247,7 @@ export class AgentOrchestratorService {
           incRow.request_id || null,
           incidentId,
           reviewer,
-          assignedRespId,
+          assignedRespId || null,
           `Automatic dispatch triggered. ${formattedUnitName} deployed to scene.`
         ]);
 
@@ -1139,6 +1256,7 @@ export class AgentOrchestratorService {
           SELECT id, callsign FROM ambulances 
           WHERE status = 'AVAILABLE' 
           ORDER BY id ASC LIMIT 1
+          FOR UPDATE
         `);
         if (availAmb.rowCount && availAmb.rowCount > 0) {
           const amb = availAmb.rows[0];
@@ -1154,6 +1272,7 @@ export class AgentOrchestratorService {
           SELECT id, name, available FROM equipment 
           WHERE available > 0 
           ORDER BY available DESC LIMIT 1
+          FOR UPDATE
         `);
         if (availEqp.rowCount && availEqp.rowCount > 0) {
           const eqp = availEqp.rows[0];
@@ -1167,11 +1286,12 @@ export class AgentOrchestratorService {
           `, [newAvail, eqp.id]);
         }
 
-        // K. Increase shelter occupancy
+        // K. Increase shelter occupancy (bounds checked, never exceeding capacity)
         const openShelter = await client.query(`
           SELECT id, name, capacity, occupancy FROM shelters 
-          WHERE status IN ('OPEN', 'ACTIVATING') 
+          WHERE status IN ('OPEN', 'ACTIVATING') AND capacity > occupancy
           ORDER BY (capacity - occupancy) DESC LIMIT 1
+          FOR UPDATE
         `);
         if (openShelter.rowCount && openShelter.rowCount > 0) {
           const shl = openShelter.rows[0];
@@ -1186,7 +1306,24 @@ export class AgentOrchestratorService {
           `, [newOcc, shl.id]);
         }
 
-        // L. Insert real dispatch_records
+        // L. Allocate supplies in database (bounds checked)
+        const availSup = await client.query(`
+          SELECT id, name, qty FROM supplies 
+          WHERE qty > 0 
+          ORDER BY qty DESC LIMIT 1
+          FOR UPDATE
+        `);
+        if (availSup.rowCount && availSup.rowCount > 0) {
+          const sup = availSup.rows[0];
+          const newQty = Math.max(0, sup.qty - 5);
+          await client.query(`
+            UPDATE supplies 
+            SET qty = $1, updated_at = CURRENT_TIMESTAMP
+            WHERE id = $2
+          `, [newQty, sup.id]);
+        }
+
+        // M. Insert real dispatch_records
         const teamQty = Number(rec?.recommended_teams_count) || 1;
         await client.query(`
           INSERT INTO dispatch_records (
@@ -1204,7 +1341,7 @@ export class AgentOrchestratorService {
           reviewer,
         ]);
 
-        // M. Audit log
+        // N. Audit log
         await client.query(`
           INSERT INTO audit_logs (id, actor, action, entity, metadata)
           VALUES ($1, $2, 'DISPATCH_APPROVED_EXECUTED', 'orchestration_plans', $3)
