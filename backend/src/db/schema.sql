@@ -47,12 +47,14 @@ CREATE TABLE IF NOT EXISTS incidents (
     status VARCHAR(50) NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'RESPONDING', 'PENDING', 'CONTAINED', 'RESOLVED')),
     responders_count INT DEFAULT 0,
     pending BOOLEAN DEFAULT FALSE,
+    shelter_id VARCHAR(64) REFERENCES shelters(id) ON DELETE SET NULL,
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_incidents_severity ON incidents(severity);
 CREATE INDEX IF NOT EXISTS idx_incidents_status ON incidents(status);
+CREATE INDEX IF NOT EXISTS idx_incidents_shelter_id ON incidents(shelter_id);
 
 -- 4. Citizen Emergency / SOS Requests Table
 CREATE TABLE IF NOT EXISTS emergency_requests (
@@ -163,12 +165,16 @@ CREATE TABLE IF NOT EXISTS supplies (
     name VARCHAR(255) NOT NULL,
     category VARCHAR(50) NOT NULL CHECK (category IN ('MEDICAL', 'WATER', 'FOOD', 'SAFETY', 'EQUIPMENT')),
     qty INT NOT NULL DEFAULT 0,
+    allocated INT NOT NULL DEFAULT 0,
     demand INT NOT NULL DEFAULT 0,
     unit VARCHAR(50) NOT NULL,
     location VARCHAR(255) NOT NULL,
     last_sync VARCHAR(50),
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE INDEX IF NOT EXISTS idx_supplies_category ON supplies(category);
+CREATE INDEX IF NOT EXISTS idx_supplies_name ON supplies(name);
 
 -- 11. Ambulances Table
 CREATE TABLE IF NOT EXISTS ambulances (
@@ -179,7 +185,7 @@ CREATE TABLE IF NOT EXISTS ambulances (
     location VARCHAR(255) NOT NULL,
     latitude NUMERIC(10, 6),
     longitude NUMERIC(10, 6),
-    last_update VARCHAR(50),
+    last_update VARCHAR(255),
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
