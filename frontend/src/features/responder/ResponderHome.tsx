@@ -97,7 +97,9 @@ function MissionSection({
       <div className="p-4 rounded-xl flex-1" style={{ background: `${color}08`, border: `1px solid ${color}33` }}>
         <div className="flex items-center justify-between mb-2">
           <div className="font-mono text-xs tracking-widest" style={{ color }}>ACTIVE MISSION</div>
-          <span className="font-mono text-[10px] text-white/40">INCIDENT ID</span>
+          <span className="font-mono text-[10px] text-white/40">
+            {mission?.planId ? `PLAN: ${mission.planId}` : 'INCIDENT ID'}
+          </span>
         </div>
         <div className="font-condensed font-black text-2xl text-white mb-0.5">{mission?.incidentId || mission?.id || 'Awaiting Incident'}</div>
         <div className="font-condensed font-bold text-lg mb-1" style={{ color }}>{mission?.title || 'EMERGENCY OPERATION'}</div>
@@ -189,6 +191,7 @@ function IncidentSection({
 }) {
   const incidentId = mission?.incidentId || mission?.id || 'Pending Incident';
   const requestId = mission?.requestId || trackingBundle?.citizen?.requestId || 'Not Linked';
+  const planId = mission?.planId || mission?.plan_id || 'Awaiting Plan';
   const address =
     mission?.destinationAddress ||
     trackingBundle?.citizen?.location ||
@@ -205,6 +208,7 @@ function IncidentSection({
       <div className="font-condensed font-black text-xl text-white">INCIDENT DETAILS</div>
       {[
         { label: 'INCIDENT ID', value: incidentId },
+        { label: 'APPROVED PLAN ID', value: planId, color: '#f59e0b' },
         { label: 'SOS REQUEST ID', value: requestId },
         { label: 'TITLE', value: mission?.title || 'Operational Emergency Response' },
         { label: 'SEVERITY', value: mission?.priority || 'CRITICAL', color: '#dc2626' },
