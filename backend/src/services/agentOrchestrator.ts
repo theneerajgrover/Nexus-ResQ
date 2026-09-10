@@ -1295,11 +1295,13 @@ export class AgentOrchestratorService {
         `);
         if (availAmb.rowCount && availAmb.rowCount > 0) {
           const amb = availAmb.rows[0];
+          const ambLoc = (rec?.affected_zone || incRow.location || incidentId || 'Scene').substring(0, 150);
+          const lastUpdateText = `Dispatched to ${ambLoc} (${incidentId})`.substring(0, 250);
           await client.query(`
             UPDATE ambulances 
-            SET status = 'DISPATCHED', last_update = 'Dispatched to ' || $1, updated_at = CURRENT_TIMESTAMP
+            SET status = 'DISPATCHED', last_update = $1, updated_at = CURRENT_TIMESTAMP
             WHERE id = $2
-          `, [rec?.affected_zone || incRow.location || incidentId, amb.id]);
+          `, [lastUpdateText, amb.id]);
         }
 
         // J. Allocate equipment in database (bounds checked, never negative)

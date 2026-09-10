@@ -112,6 +112,29 @@ app.listen(PORT, '0.0.0.0', async () => {
   } catch (err: any) {
     console.error('[Startup Migration Error]:', err.message);
   }
+
+  try {
+    const { runPrototypeResourceRecoveryMigration } = await import('./db/migrate_prototype_resource_recovery');
+    await runPrototypeResourceRecoveryMigration();
+    const { startPrototypeResourceRecoveryScheduler } = await import('./services/prototypeResourceRecovery');
+    startPrototypeResourceRecoveryScheduler();
+  } catch (err: any) {
+    console.error('[Startup Resource Recovery Error]:', err.message);
+  }
+
+  try {
+    const { runShelterIncidentLinkMigration } = await import('./db/migrate_shelter_incident_link');
+    await runShelterIncidentLinkMigration();
+  } catch (err: any) {
+    console.error('[Startup Shelter Link Migration Error]:', err.message);
+  }
+
+  try {
+    const { runResourceEditValidationMigration } = await import('./db/migrate_resource_edit_validation');
+    await runResourceEditValidationMigration();
+  } catch (err: any) {
+    console.error('[Startup Resource Edit Validation Migration Error]:', err.message);
+  }
 });
 
 export default app;
