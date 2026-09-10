@@ -23,7 +23,7 @@ export default function SOSFlow() {
   const [emergency, setEmergency] = useState('MEDICAL');
   const [assistanceNeeded, setAssistanceNeeded] = useState<string[]>(['RESCUE']);
   const [description, setDescription] = useState('');
-  const [requestId, setRequestId] = useState(urlReqId || 'SOS-' + Math.floor(Math.random() * 90000 + 10000));
+  const [requestId, setRequestId] = useState(urlReqId || '');
   const [incidentId, setIncidentId] = useState<string | null>(urlIncId || null);
   const [locationData, setLocationData] = useState<LocationState>({
     lat: 28.6139,
@@ -33,6 +33,8 @@ export default function SOSFlow() {
     isGps: false,
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const hasSubmittedRef = useRef(false);
 
   useEffect(() => {
     if (urlReqId) setRequestId(urlReqId);
@@ -41,7 +43,9 @@ export default function SOSFlow() {
   }, [urlReqId, urlIncId]);
 
   const handleSendSOS = async () => {
+    if (isSubmitting || hasSubmittedRef.current) return;
     setIsSubmitting(true);
+    setSubmitError(null);
     try {
       const res = await emergencyApi.submitRequest({
         emergency_type: emergency.toLowerCase(),
@@ -51,6 +55,13 @@ export default function SOSFlow() {
         longitude: locationData.lng,
         description: description || `CRITICAL SOS: ${emergency}. Assistance requested: ${assistanceNeeded.join(', ')}`,
       });
+
+      if (res.success === false) {
+        setSubmitError(res.error || 'Failed to record emergency request. Please try again or call emergency services.');
+        setIsSubmitting(false);
+        return;
+      }
+
       const data = res.data?.data || res.data;
       if (data?.id || data?.requestId) {
         const id = data.id || data.requestId;
@@ -59,11 +70,13 @@ export default function SOSFlow() {
       if (data?.assignedIncidentId) {
         setIncidentId(data.assignedIncidentId);
       }
-    } catch (err) {
-      console.error('Failed to dispatch SOS to backend:', err);
-    } finally {
+      hasSubmittedRef.current = true;
       setIsSubmitting(false);
       setStep('submitted');
+    } catch (err) {
+      console.error('Failed to dispatch SOS to backend:', err);
+      setSubmitError('Connection error. Please check your network and try again, or call emergency services directly.');
+      setIsSubmitting(false);
     }
   };
 
@@ -93,6 +106,7 @@ export default function SOSFlow() {
             setDescription={setDescription}
             onSubmit={handleSendSOS}
             isSubmitting={isSubmitting}
+            submitError={submitError}
           />
         )}
         {step === 'submitted' && (
@@ -343,6 +357,7 @@ function InfoStep({
   setDescription,
   onSubmit,
   isSubmitting,
+  submitError,
 }: {
   emergency: string;
   setEmergency: (v: string) => void;
@@ -352,6 +367,7 @@ function InfoStep({
   setDescription: (v: string) => void;
   onSubmit: () => void;
   isSubmitting?: boolean;
+  submitError?: string | null;
 }) {
   const types = ['MEDICAL', 'FLOOD', 'FIRE', 'TRAPPED', 'MISSING PERSON', 'OTHER'];
   const assistanceTypes = ['RESCUE', 'MEDICAL', 'EVACUATION', 'SHELTER', 'SUPPLIES', 'FOOD/WATER'];
@@ -428,6 +444,15 @@ function InfoStep({
         value={description}
         onChange={(e) => setDescription(e.target.value)}
       />
+
+      {submitError && (
+        <div
+          className="p-3 rounded-lg font-mono text-xs mb-4 leading-relaxed"
+          style={{ background: 'rgba(220,38,38,0.08)', border: '1px solid rgba(220,38,38,0.3)', color: '#f87171' }}
+        >
+          ⚠ {submitError}
+        </div>
+      )}
 
       <motion.button
         onClick={onSubmit}

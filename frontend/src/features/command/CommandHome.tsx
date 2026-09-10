@@ -16,20 +16,10 @@ const modeColors: Record<OrbitalMode, string> = {
   RESOURCES: '#10b981', INTELLIGENCE: '#a855f7',
 };
 
-const incidents = [
-  { id: 'INC-2849', type: 'STRUCTURAL', severity: 'CRITICAL', lat: 52, lng: 48, status: 'ACTIVE', responders: 2, pending: true },
-  { id: 'INC-2847', type: 'FLOOD', severity: 'HIGH', lat: 35, lng: 30, status: 'RESPONDING', responders: 4, pending: false },
-  { id: 'INC-2851', type: 'MEDICAL', severity: 'HIGH', lat: 65, lng: 60, status: 'PENDING', responders: 0, pending: true },
-  { id: 'INC-2845', type: 'FIRE', severity: 'MODERATE', lat: 78, lng: 25, status: 'CONTAINED', responders: 3, pending: false },
-  { id: 'INC-2850', type: 'EVACUATION', severity: 'HIGH', lat: 22, lng: 70, status: 'ACTIVE', responders: 6, pending: false },
-];
-
-const responders = [
-  { id: 'R-14', name: 'Alpha-14', status: 'EN ROUTE', lat: 48, lng: 52, incident: 'INC-2849' },
-  { id: 'R-07', name: 'Bravo-7', status: 'ON SCENE', lat: 34, lng: 29, incident: 'INC-2847' },
-  { id: 'R-22', name: 'Delta-22', status: 'AVAILABLE', lat: 60, lng: 40, incident: null },
-  { id: 'R-03', name: 'Echo-3', status: 'ASSISTING', lat: 65, lng: 61, incident: 'INC-2851' },
-];
+// Incident and responder data is fetched from the database via commandApi.getOverview()
+// and kept in liveIncidents / liveResponders state. No hardcoded fallback data.
+const incidents: any[] = [];
+const responders: any[] = [];
 
 const severityColors: Record<string, string> = {
   CRITICAL: '#dc2626', HIGH: '#f59e0b', MODERATE: '#06b6d4', LOW: '#10b981',
@@ -943,16 +933,18 @@ function HomeTab({
   agentsList,
   incidentsList,
   respondersList,
+  emergencyCount,
 }: {
   onApprove: () => void;
   activePlan?: any;
   agentsList?: any[];
   incidentsList?: any[];
   respondersList?: any[];
+  emergencyCount?: number;
 }) {
   const lastUpdated = useLastUpdated(5000);
-  const currentIncidents = incidentsList && incidentsList.length ? incidentsList : incidents;
-  const currentResponders = respondersList && respondersList.length ? respondersList : responders;
+  const currentIncidents = incidentsList || [];
+  const currentResponders = respondersList || [];
   const critical = currentIncidents.filter((i: any) => i.severity === 'CRITICAL').length;
   const pending = currentIncidents.filter((i: any) => i.pending).length;
   const available = currentResponders.filter((r: any) => r.status === 'AVAILABLE').length;
@@ -964,8 +956,8 @@ function HomeTab({
           {[
             { label: 'CRITICAL', value: critical, color: '#dc2626', sub: 'active incidents' },
             { label: 'NEED DISPATCH', value: pending, color: '#f59e0b', sub: 'pending action' },
-            { label: 'SOS VOLUME', value: '47', color: '#06b6d4', sub: 'last 60 min' },
-            { label: 'UNITS FREE', value: available, color: '#10b981', sub: `of ${responders.length} total` },
+            { label: 'SOS VOLUME', value: emergencyCount !== undefined ? emergencyCount : currentIncidents.length, color: '#06b6d4', sub: 'registered requests' },
+            { label: 'UNITS FREE', value: available, color: '#10b981', sub: `of ${currentResponders.length} total` },
           ].map((k) => (
             <div key={k.label} className="p-4 rounded-xl flex flex-col gap-1"
               style={{ background: `${k.color}08`, border: `1px solid ${k.color}22` }}>
@@ -1060,7 +1052,17 @@ function HomeTab({
 }
 
 // ── ResQ Sphere canvas ────────────────────────────────────────────────────────
-function ResQSphere({ selectedId, onSelect }: { selectedId: string | null; onSelect: (id: string) => void }) {
+function ResQSphere({ selectedId, onSelect, incidentsList, respondersList }: { selectedId: string | null; onSelect: (id: string) => void; incidentsList?: any[]; respondersList?: any[] }) {
+  const sphereIncidents = (incidentsList || incidents).map((inc: any) => ({
+    ...inc,
+    lat: typeof inc.lat === 'number' && inc.lat <= 100 ? inc.lat : ((typeof inc.lat === 'number' ? inc.lat : 30) % 90 + 10),
+    lng: typeof inc.lng === 'number' && inc.lng <= 100 ? inc.lng : ((typeof inc.lng === 'number' ? inc.lng : 50) % 90 + 10),
+  }));
+  const sphereResponders = (respondersList || responders).map((r: any) => ({
+    ...r,
+    lat: typeof r.lat === 'number' && r.lat <= 100 ? r.lat : ((typeof r.lat === 'number' ? r.lat : 40) % 90 + 10),
+    lng: typeof r.lng === 'number' && r.lng <= 100 ? r.lng : ((typeof r.lng === 'number' ? r.lng : 50) % 90 + 10),
+  }));
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animRef = useRef(0);
 
@@ -1102,7 +1104,7 @@ function ResQSphere({ selectedId, onSelect }: { selectedId: string | null; onSel
       sphereGrad.addColorStop(0, 'rgba(20,8,8,0.92)'); sphereGrad.addColorStop(1, 'rgba(8,11,15,0.96)');
       ctx.fillStyle = sphereGrad;
       ctx.beginPath(); ctx.arc(cx, cy, r - 1, 0, Math.PI * 2); ctx.fill();
-      incidents.forEach((inc) => {
+      sphereIncidents.forEach((inc: any) => {
         const px = cx + (inc.lng / 100 - 0.5) * r * 1.7;
         const py = cy + (inc.lat / 100 - 0.5) * r * 1.7;
         const color = severityColors[inc.severity];
@@ -1121,7 +1123,7 @@ function ResQSphere({ selectedId, onSelect }: { selectedId: string | null; onSel
           ctx.strokeStyle = `${color}55`; ctx.lineWidth = 1.5; ctx.stroke();
         }
       });
-      responders.forEach((resp) => {
+      sphereResponders.forEach((resp: any) => {
         const px = cx + (resp.lng / 100 - 0.5) * r * 1.7;
         const py = cy + (resp.lat / 100 - 0.5) * r * 1.7;
         const rc = resp.status === 'AVAILABLE' ? '#10b981' : resp.status === 'EN ROUTE' ? '#06b6d4' : '#f59e0b';
@@ -1143,7 +1145,7 @@ function ResQSphere({ selectedId, onSelect }: { selectedId: string | null; onSel
     const W = canvas.width, H = canvas.height;
     const cx = W / 2, cy = H / 2;
     const r = Math.min(W, H) * 0.4;
-    for (const inc of incidents) {
+    for (const inc of sphereIncidents) {
       const px = cx + (inc.lng / 100 - 0.5) * r * 1.7;
       const py = cy + (inc.lat / 100 - 0.5) * r * 1.7;
       if (Math.hypot(mx - px, my - py) < 18) { onSelect(inc.id); return; }
@@ -1154,11 +1156,13 @@ function ResQSphere({ selectedId, onSelect }: { selectedId: string | null; onSel
 }
 
 // ── Incident Capsule ──────────────────────────────────────────────────────────
-function IncidentCapsule({ incidentId, onClose, onApprove }: { incidentId: string; onClose: () => void; onApprove: () => void }) {
-  const inc = incidents.find((i) => i.id === incidentId);
+function IncidentCapsule({ incidentId, onClose, incidentsList }: { incidentId: string; onClose: () => void; onApprove?: () => void; incidentsList?: any[] }) {
+  const inc = (incidentsList || incidents).find((i: any) => i.id === incidentId);
   if (!inc) return null;
-  const color = severityColors[inc.severity];
-  const [dispatched, setDispatched] = useState(false);
+  const color = severityColors[inc.severity] || '#06b6d4';
+  const isDispatched = inc.status === 'RESPONDING' || inc.status === 'DISPATCHED' || inc.status === 'ASSIGNED';
+  const isPending = inc.pending || inc.status === 'PENDING';
+
   return (
     <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }}
       className="rounded-xl overflow-hidden" style={{ border: `1px solid ${color}33` }}>
@@ -1168,52 +1172,52 @@ function IncidentCapsule({ incidentId, onClose, onApprove }: { incidentId: strin
           <div className="font-mono text-xs tracking-widest" style={{ color }}>{inc.severity} INCIDENT</div>
           <div className="font-condensed font-black text-lg text-white">{inc.id}</div>
         </div>
-        <button onClick={onClose} className="font-mono text-xs text-white/30 hover:text-white/60">✕</button>
+        <button onClick={onClose} className="font-mono text-xs text-white/30 hover:text-white/60 cursor-pointer">✕</button>
       </div>
       <div className="p-4 space-y-4 bg-[#0a0d14]">
         <div className="grid grid-cols-2 gap-2">
           {[
             { label: 'TYPE', value: inc.type, color },
-            { label: 'STATUS', value: inc.status, color: '#06b6d4' },
-            { label: 'UNITS', value: inc.responders.toString(), color: '#10b981' },
-            { label: 'CONFIDENCE', value: '91%', color: '#a855f7' },
+            { label: 'STATUS', value: inc.status, color: isDispatched ? '#10b981' : isPending ? '#f59e0b' : '#06b6d4' },
+            { label: 'UNITS', value: (inc.responders || inc.responders_count || 0).toString(), color: '#10b981' },
+            { label: 'LOCATION', value: inc.location ? inc.location.slice(0, 16) + '...' : 'Sector Grid', color: '#a855f7' },
           ].map((item) => (
             <div key={item.label} className="p-2.5 rounded" style={{ background: 'rgba(255,255,255,0.03)' }}>
               <div className="font-mono text-xs text-white/30 mb-0.5">{item.label}</div>
-              <div className="font-condensed font-bold text-sm" style={{ color: item.color }}>{item.value}</div>
+              <div className="font-condensed font-bold text-sm truncate" style={{ color: item.color }}>{item.value}</div>
             </div>
           ))}
         </div>
         <div>
-          <div className="font-mono text-xs tracking-widest text-white/30 mb-2">CONFIRMED FACTS</div>
-          <div className="font-mono text-xs text-white/55 leading-relaxed p-3 rounded"
+          <div className="font-mono text-xs tracking-widest text-white/30 mb-2">OPERATIONAL DATA</div>
+          <div className="font-mono text-xs text-white/65 leading-relaxed p-3 rounded"
             style={{ background: 'rgba(255,255,255,0.02)' }}>
-            Structural collapse reported. 3 persons reported trapped. Gas leak detected. North approach blocked.
+            {inc.location || 'Tactical Disaster Zone'} · Coordinates: {inc.lat || '0'}, {inc.lng || '0'}
           </div>
         </div>
         <div>
           <div className="font-mono text-xs tracking-widest mb-2" style={{ color: '#a855f7' }}>AI INTELLIGENCE</div>
           <div className="font-mono text-xs leading-relaxed p-3 rounded"
             style={{ background: 'rgba(168,85,247,0.05)', border: '1px solid rgba(168,85,247,0.15)', color: '#c4b5fd' }}>
-            Secondary collapse risk within 45 min (78% confidence). Structural team recommended. Evacuate 200m perimeter.
+            {isPending ? 'Response plan generated. Awaiting Command authorization in Pending Approvals.' : isDispatched ? `Field deployment active. Unit ${inc.assigned_responder_id || 'assigned'} en route to coordinates.` : `Incident status: ${inc.status}. Perimeter secure.`}
           </div>
-          <div className="font-mono text-xs text-white/20 mt-1.5">AI ASSESSMENT — NOT CONFIRMED FACT</div>
         </div>
-        <div className="flex gap-2">
-          {!dispatched ? (
-            <>
-              <button onClick={() => setDispatched(true)}
-                className="flex-1 py-2.5 rounded-lg font-condensed font-bold text-xs tracking-widest"
-                style={{ background: color, color: '#080b0f' }}>DISPATCH TEAM</button>
-              <button onClick={onApprove}
-                className="flex-1 py-2.5 rounded-lg font-condensed font-bold text-xs tracking-widest"
-                style={{ background: 'rgba(245,158,11,0.1)', color: '#f59e0b', border: '1px solid rgba(245,158,11,0.25)' }}>
-                REVIEW AI PLAN
-              </button>
-            </>
+        <div>
+          {isDispatched ? (
+            <div className="w-full py-2.5 rounded-lg font-condensed font-bold text-xs tracking-widest text-center"
+              style={{ background: 'rgba(16,185,129,0.12)', color: '#10b981', border: '1px solid rgba(16,185,129,0.3)' }}>
+              ✓ UNIT DISPATCHED · RESPONSE IN PROGRESS
+            </div>
+          ) : isPending ? (
+            <div className="w-full py-2.5 rounded-lg font-condensed font-bold text-xs tracking-widest text-center"
+              style={{ background: 'rgba(245,158,11,0.1)', color: '#f59e0b', border: '1px solid rgba(245,158,11,0.25)' }}>
+              ⏳ PENDING HUMAN APPROVAL
+            </div>
           ) : (
-            <div className="flex-1 py-2.5 rounded-lg font-condensed font-bold text-xs tracking-widest text-center"
-              style={{ background: 'rgba(16,185,129,0.12)', color: '#10b981' }}>✓ TEAM DISPATCHED</div>
+            <div className="w-full py-2.5 rounded-lg font-condensed font-bold text-xs tracking-widest text-center"
+              style={{ background: 'rgba(6,182,212,0.1)', color: '#06b6d4', border: '1px solid rgba(6,182,212,0.25)' }}>
+              STATUS: {inc.status}
+            </div>
           )}
         </div>
       </div>
@@ -2191,7 +2195,8 @@ function EvacuationTab() {
 }
 
 // ── Operations tab ────────────────────────────────────────────────────────────
-function OperationsTab() {
+function OperationsTab({ respondersList }: { respondersList?: any[] }) {
+  const currentResponders = respondersList || [];
   const timeline = [
     { time: '14:02', event: 'INC-2851 created', type: 'WARNING', color: '#f59e0b' },
     { time: '14:15', event: 'INC-2849 escalated CRITICAL', type: 'CRITICAL', color: '#dc2626' },
@@ -2216,7 +2221,7 @@ function OperationsTab() {
           </div>
         ))}
         <div className="font-mono text-xs tracking-widest text-white/30 mt-2">RESPONDER STATUS</div>
-        {responders.map((r) => {
+        {currentResponders.map((r: any) => {
           const rc = r.status === 'AVAILABLE' ? '#10b981' : r.status === 'EN ROUTE' ? '#06b6d4' : '#f59e0b';
           return (
             <div key={r.id} className="flex items-center gap-3 px-3 py-2.5 rounded"
@@ -2259,25 +2264,32 @@ function OperationsTab() {
 }
 
 // ── Incidents tab ─────────────────────────────────────────────────────────────
-function IncidentsTab({ onApprove }: { onApprove: () => void }) {
-  const [selected, setSelected] = useState<string | null>(() => sortIncidents(incidents)[0]?.id ?? null);
-  const [dispatched, setDispatched] = useState<string[]>([]);
-  const selectedInc = incidents.find((i) => i.id === selected);
+function IncidentsTab({ incidentsList, historyList }: { incidentsList?: any[]; historyList?: any[] }) {
+  const currentIncidents = incidentsList || [];
+  const currentHistory = historyList || [];
+  const [selected, setSelected] = useState<string | null>(() => sortIncidents(currentIncidents)[0]?.id ?? null);
+  const selectedInc = currentIncidents.find((i: any) => i.id === selected);
+
+  const selectedHistory = selectedInc
+    ? currentHistory.filter((h: any) => h.incident_id === selectedInc.id)
+    : [];
 
   return (
     <div className="h-full flex gap-5 overflow-hidden">
       {/* Incident list */}
       <div className="w-80 shrink-0 flex flex-col gap-3 overflow-y-auto">
         <div className="font-mono text-xs tracking-widest text-white/30">
-          INCIDENT LOG — {incidents.length} RECORDS
+          INCIDENT LOG — {currentIncidents.length} RECORDS
         </div>
-        {sortIncidents(incidents).map((inc) => {
-          const color = severityColors[inc.severity];
+        {sortIncidents(currentIncidents).map((inc: any) => {
+          const color = severityColors[inc.severity] || '#06b6d4';
           const isSelected = selected === inc.id;
+          const isDispatched = inc.status === 'RESPONDING' || inc.status === 'DISPATCHED' || inc.status === 'ASSIGNED';
+          const isPending = inc.pending || inc.status === 'PENDING';
           return (
             <motion.button key={inc.id}
               onClick={() => setSelected(isSelected ? null : inc.id)}
-              className="w-full text-left p-4 rounded-xl transition-all duration-200"
+              className="w-full text-left p-4 rounded-xl transition-all duration-200 cursor-pointer"
               style={{
                 background: isSelected ? `${color}0e` : 'rgba(255,255,255,0.02)',
                 border: `1px solid ${isSelected ? color + '44' : 'rgba(255,255,255,0.05)'}`,
@@ -2287,21 +2299,24 @@ function IncidentsTab({ onApprove }: { onApprove: () => void }) {
                 <div className="w-2 h-2 rounded-full shrink-0" style={{ background: color }} />
                 <div className="font-mono text-xs px-2 py-0.5 rounded"
                   style={{ background: `${color}15`, color }}>{inc.severity}</div>
-                {inc.pending && !dispatched.includes(inc.id) && (
-                  <div className="font-mono text-xs ml-auto" style={{ color: '#f59e0b' }}>NEEDS DISPATCH</div>
+                {isPending && (
+                  <div className="font-mono text-xs ml-auto" style={{ color: '#f59e0b' }}>PENDING APPROVAL</div>
                 )}
-                {dispatched.includes(inc.id) && (
+                {isDispatched && (
                   <div className="font-mono text-xs ml-auto" style={{ color: '#10b981' }}>✓ DISPATCHED</div>
+                )}
+                {inc.status === 'CONTAINED' && (
+                  <div className="font-mono text-xs ml-auto" style={{ color: '#10b981' }}>CONTAINED</div>
                 )}
               </div>
               <div className="font-condensed font-bold text-sm text-white mb-0.5">{inc.type}</div>
               <div className="flex items-center justify-between">
                 <div className="font-mono text-xs text-white/35">{inc.id}</div>
-                <div className="font-mono text-xs" style={{ color: inc.status === 'CONTAINED' ? '#10b981' : '#06b6d4' }}>
+                <div className="font-mono text-xs" style={{ color: isDispatched ? '#10b981' : isPending ? '#f59e0b' : '#06b6d4' }}>
                   {inc.status}
                 </div>
               </div>
-              <div className="font-mono text-xs text-white/25 mt-1">{inc.responders} units assigned</div>
+              <div className="font-mono text-xs text-white/25 mt-1">{inc.responders || inc.responders_count || 0} units assigned</div>
             </motion.button>
           );
         })}
@@ -2316,75 +2331,91 @@ function IncidentsTab({ onApprove }: { onApprove: () => void }) {
               <div className="flex items-start justify-between">
                 <div>
                   <div className="font-mono text-xs tracking-widest mb-1"
-                    style={{ color: severityColors[selectedInc.severity] }}>
+                    style={{ color: severityColors[selectedInc.severity] || '#06b6d4' }}>
                     {selectedInc.severity} INCIDENT
                   </div>
                   <div className="font-condensed font-black text-3xl text-white">{selectedInc.id}</div>
                   <div className="font-condensed font-bold text-lg mt-0.5"
-                    style={{ color: severityColors[selectedInc.severity] }}>{selectedInc.type}</div>
+                    style={{ color: severityColors[selectedInc.severity] || '#06b6d4' }}>{selectedInc.type}</div>
                 </div>
                 <div className="font-mono text-xs px-3 py-1.5 rounded"
-                  style={{ background: 'rgba(6,182,212,0.1)', color: '#06b6d4', border: '1px solid rgba(6,182,212,0.25)' }}>
+                  style={{
+                    background: selectedInc.status === 'RESPONDING' || selectedInc.status === 'DISPATCHED' ? 'rgba(16,185,129,0.1)' : selectedInc.pending ? 'rgba(245,158,11,0.1)' : 'rgba(6,182,212,0.1)',
+                    color: selectedInc.status === 'RESPONDING' || selectedInc.status === 'DISPATCHED' ? '#10b981' : selectedInc.pending ? '#f59e0b' : '#06b6d4',
+                    border: `1px solid ${selectedInc.status === 'RESPONDING' || selectedInc.status === 'DISPATCHED' ? 'rgba(16,185,129,0.3)' : selectedInc.pending ? 'rgba(245,158,11,0.3)' : 'rgba(6,182,212,0.3)'}`,
+                  }}>
                   {selectedInc.status}
                 </div>
               </div>
 
               <div className="grid grid-cols-3 gap-3">
                 {[
-                  { label: 'UNITS ASSIGNED', value: selectedInc.responders.toString(), color: '#10b981' },
-                  { label: 'AI CONFIDENCE', value: '91%', color: '#a855f7' },
-                  { label: 'DISPATCH STATUS', value: dispatched.includes(selectedInc.id) ? 'DISPATCHED' : selectedInc.pending ? 'PENDING' : 'N/A', color: dispatched.includes(selectedInc.id) ? '#10b981' : selectedInc.pending ? '#f59e0b' : '#06b6d4' },
+                  { label: 'UNITS ASSIGNED', value: (selectedInc.responders || selectedInc.responders_count || 0).toString(), color: '#10b981' },
+                  { label: 'OPERATIONAL STATE', value: selectedInc.status, color: selectedInc.status === 'RESPONDING' ? '#10b981' : selectedInc.pending ? '#f59e0b' : '#06b6d4' },
+                  { label: 'DISPATCH STATUS', value: (selectedInc.status === 'RESPONDING' || selectedInc.status === 'DISPATCHED') ? 'DISPATCHED' : selectedInc.pending ? 'AWAITING APPROVAL' : 'ACTIVE', color: (selectedInc.status === 'RESPONDING' || selectedInc.status === 'DISPATCHED') ? '#10b981' : selectedInc.pending ? '#f59e0b' : '#06b6d4' },
                 ].map((item) => (
                   <div key={item.label} className="p-4 rounded-xl text-center"
                     style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
-                    <div className="font-condensed font-black text-2xl mb-1" style={{ color: item.color }}>{item.value}</div>
+                    <div className="font-condensed font-black text-xl mb-1" style={{ color: item.color }}>{item.value}</div>
                     <div className="font-mono text-xs text-white/30">{item.label}</div>
                   </div>
                 ))}
               </div>
 
               <div className="p-4 rounded-xl" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
-                <div className="font-mono text-xs tracking-widest text-white/30 mb-2">CONFIRMED FACTS</div>
-                <div className="font-mono text-xs text-white/55 leading-relaxed">
-                  Structural collapse reported. 3 persons reported trapped. Gas leak detected. North approach blocked. Emergency services on scene.
+                <div className="font-mono text-xs tracking-widest text-white/30 mb-2">INCIDENT LOCATION & SCENE</div>
+                <div className="font-mono text-xs text-white/70 leading-relaxed">
+                  {selectedInc.location || 'Designated Tactical Sector'} · Lat: {selectedInc.lat || '0'} · Lng: {selectedInc.lng || '0'}
                 </div>
+                {selectedInc.assigned_responder_id && (
+                  <div className="font-mono text-xs mt-2" style={{ color: '#10b981' }}>
+                    Assigned Field Unit: Unit {selectedInc.assigned_responder_id}
+                  </div>
+                )}
               </div>
 
               <div className="p-4 rounded-xl"
                 style={{ background: 'rgba(168,85,247,0.05)', border: '1px solid rgba(168,85,247,0.2)' }}>
-                <div className="font-mono text-xs tracking-widest mb-2" style={{ color: '#a855f7' }}>AI ASSESSMENT</div>
-                <div className="font-mono text-xs leading-relaxed" style={{ color: '#c4b5fd' }}>
-                  Secondary collapse risk within 45 min (78% confidence). Structural team recommended. Evacuate 200m perimeter around {selectedInc.id} zone.
-                </div>
-                <div className="font-mono text-xs text-white/20 mt-2">NOT CONFIRMED FACT — VERIFY WITH FIELD</div>
+                <div className="font-mono text-xs tracking-widest mb-3" style={{ color: '#a855f7' }}>OPERATIONAL HISTORY & AUDIT TRAIL</div>
+                {selectedHistory.length > 0 ? (
+                  <div className="space-y-2.5">
+                    {selectedHistory.map((h: any, idx: number) => (
+                      <div key={h.id || idx} className="flex items-start gap-3 text-xs font-mono">
+                        <span className="text-white/30 shrink-0">{h.time || '12:00'}</span>
+                        <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 mt-1.5 shrink-0" />
+                        <div className="flex-1">
+                          <span className="text-emerald-400 font-bold">{h.new_status || 'UPDATE'}</span>
+                          <span className="text-white/40"> by {h.actor || 'System'}</span>:
+                          <span className="text-white/70 ml-1">{h.notes}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="font-mono text-xs text-white/40">
+                    Incident logged and synchronized in operational database. Awaiting lifecycle updates.
+                  </div>
+                )}
               </div>
 
-              {selectedInc.pending && (
-                <div className="flex gap-3 mt-auto">
-                  {!dispatched.includes(selectedInc.id) ? (
-                    <>
-                      <motion.button
-                        onClick={() => setDispatched((p) => [...p, selectedInc.id])}
-                        className="flex-1 py-3.5 rounded-xl font-condensed font-black text-base tracking-widest"
-                        style={{ background: severityColors[selectedInc.severity], color: '#080b0f' }}
-                        whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }}>
-                        DISPATCH TEAM
-                      </motion.button>
-                      <motion.button onClick={onApprove}
-                        className="flex-1 py-3.5 rounded-xl font-condensed font-black text-base tracking-widest"
-                        style={{ background: 'rgba(245,158,11,0.1)', color: '#f59e0b', border: '1px solid rgba(245,158,11,0.3)' }}
-                        whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }}>
-                        REVIEW AI PLAN
-                      </motion.button>
-                    </>
-                  ) : (
-                    <div className="flex-1 py-3.5 rounded-xl font-condensed font-bold text-base tracking-widest text-center"
-                      style={{ background: 'rgba(16,185,129,0.12)', color: '#10b981', border: '1px solid rgba(16,185,129,0.3)' }}>
-                      ✓ TEAM DISPATCHED
-                    </div>
-                  )}
-                </div>
-              )}
+              <div className="mt-auto">
+                {(selectedInc.status === 'RESPONDING' || selectedInc.status === 'DISPATCHED') ? (
+                  <div className="py-3.5 rounded-xl font-condensed font-bold text-sm tracking-widest text-center"
+                    style={{ background: 'rgba(16,185,129,0.12)', color: '#10b981', border: '1px solid rgba(16,185,129,0.3)' }}>
+                    ✓ DISPATCHED & ACTIVE RESPONSE IN PROGRESS · UNIT {selectedInc.assigned_responder_id || 'ASSIGNED'}
+                  </div>
+                ) : selectedInc.pending ? (
+                  <div className="py-3.5 rounded-xl font-condensed font-bold text-sm tracking-widest text-center"
+                    style={{ background: 'rgba(245,158,11,0.1)', color: '#f59e0b', border: '1px solid rgba(245,158,11,0.3)' }}>
+                    ⏳ PENDING HUMAN APPROVAL IN PENDING APPROVALS
+                  </div>
+                ) : (
+                  <div className="py-3.5 rounded-xl font-condensed font-bold text-sm tracking-widest text-center"
+                    style={{ background: 'rgba(6,182,212,0.1)', color: '#06b6d4', border: '1px solid rgba(6,182,212,0.3)' }}>
+                    STATUS: {selectedInc.status}
+                  </div>
+                )}
+              </div>
             </motion.div>
           ) : (
             <motion.div key="empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }}
@@ -2402,204 +2433,167 @@ function IncidentsTab({ onApprove }: { onApprove: () => void }) {
 }
 
 // ── Dispatch tab ──────────────────────────────────────────────────────────────
-function DispatchTab() {
-  const [assignments, setAssignments] = useState<Record<string, string>>({});
-  const pendingIncidents = sortIncidents(incidents.filter((i) => i.pending));
-  const availableUnits = responders.filter((r) => r.status === 'AVAILABLE');
-  const [selectedIncident, setSelectedIncident] = useState<string | null>(pendingIncidents[0]?.id ?? null);
-  const [selectedUnit, setSelectedUnit] = useState<string | null>(null);
-  const [requiredUnits, setRequiredUnits] = useState<Record<string, string>>({});
-  const [dispatchUnits, setDispatchUnits] = useState<Record<string, string>>({});
-  const [unitErrors, setUnitErrors] = useState<Record<string, string>>({});
+function DispatchTab({ incidentsList, respondersList, dispatchesList }: { incidentsList?: any[]; respondersList?: any[]; dispatchesList?: any[] }) {
+  const currentIncidents = incidentsList || [];
+  const currentResponders = respondersList || [];
+  const currentDispatches = dispatchesList || [];
 
-  function validateAndSave(incId: string) {
-    const req = parseInt(requiredUnits[incId] ?? '');
-    const disp = parseInt(dispatchUnits[incId] ?? '');
-    const errs: Record<string, string> = {};
-    if (requiredUnits[incId] !== undefined && (isNaN(req) || req < 0)) errs.required = 'Must be a non-negative number';
-    if (dispatchUnits[incId] !== undefined && (isNaN(disp) || disp < 0)) errs.dispatch = 'Must be a non-negative number';
-    if (!isNaN(req) && !isNaN(disp) && disp > availableUnits.length) errs.dispatch = `Cannot exceed ${availableUnits.length} available units`;
-    if (Object.keys(errs).length) { setUnitErrors((p) => ({ ...p, [incId]: Object.values(errs).join(' · ') })); return; }
-    setUnitErrors((p) => { const n = { ...p }; delete n[incId]; return n; });
-    // UI-only save: in production, POST to backend API here
-  }
+  const dispatchedIncidents = sortIncidents(
+    currentIncidents.filter((i: any) => i.status === 'RESPONDING' || i.status === 'DISPATCHED' || i.status === 'ASSIGNED' || (!i.pending && i.assigned_responder_id))
+  );
 
-  function assign() {
-    if (!selectedIncident || !selectedUnit) return;
-    respondersApi.updateMissionStatus(selectedUnit, { status: 'EN ROUTE', incident_id: selectedIncident })
-      .catch((err) => console.error('Failed to update responder mission status:', err));
-    setAssignments((p) => ({ ...p, [selectedUnit]: selectedIncident }));
-    setSelectedUnit(null);
-  }
+  const [selectedIncident, setSelectedIncident] = useState<string | null>(dispatchedIncidents[0]?.id ?? null);
+  const selectedInc = currentIncidents.find((i: any) => i.id === selectedIncident);
+
+  // Find matching dispatch record from PostgreSQL dispatch_records
+  const matchingDispatch = currentDispatches.find((d: any) => d.incident === selectedIncident);
+  // Find matching assigned responder from PostgreSQL responders
+  const matchingResp = currentResponders.find((r: any) => r.current_incident_id === selectedIncident || r.id === selectedInc?.assigned_responder_id);
 
   return (
     <div className="h-full flex gap-5 overflow-hidden">
-      {/* Incidents needing dispatch */}
+      {/* Authorized & Dispatched Incidents */}
       <div className="flex flex-col gap-3 w-72 shrink-0 overflow-y-auto">
-        <div className="font-mono text-xs tracking-widest text-white/30">NEEDS DISPATCH</div>
-        {pendingIncidents.map((inc) => {
-          const color = severityColors[inc.severity];
+        <div className="font-mono text-xs tracking-widest text-white/30">
+          DISPATCHED INCIDENTS ({dispatchedIncidents.length})
+        </div>
+        {dispatchedIncidents.map((inc: any) => {
+          const color = severityColors[inc.severity] || '#06b6d4';
           const isSelected = selectedIncident === inc.id;
-          const assignedUnit = Object.entries(assignments).find(([, iid]) => iid === inc.id)?.[0];
+          const assignedUnit = currentResponders.find((r: any) => r.current_incident_id === inc.id)?.name || inc.assigned_responder_id;
           return (
             <button key={inc.id}
               onClick={() => setSelectedIncident(inc.id)}
-              className="w-full text-left p-4 rounded-xl transition-all duration-200"
+              className="w-full text-left p-4 rounded-xl transition-all duration-200 cursor-pointer"
               style={{
                 background: isSelected ? `${color}0e` : 'rgba(255,255,255,0.02)',
                 border: `1px solid ${isSelected ? color + '44' : 'rgba(255,255,255,0.05)'}`,
               }}>
               <div className="flex items-center gap-2 mb-2">
                 <div className="font-mono text-xs px-2 py-0.5 rounded" style={{ background: `${color}15`, color }}>{inc.severity}</div>
-                {assignedUnit && (
-                  <div className="font-mono text-xs ml-auto" style={{ color: '#10b981' }}>✓ ASSIGNED</div>
-                )}
+                <div className="font-mono text-xs ml-auto" style={{ color: '#10b981' }}>✓ DISPATCHED</div>
               </div>
               <div className="font-condensed font-bold text-sm text-white">{inc.type}</div>
-              <div className="font-mono text-xs text-white/35 mt-0.5">{inc.id} · {inc.responders} units on scene</div>
+              <div className="font-mono text-xs text-white/35 mt-0.5">{inc.id} · {inc.responders || inc.responders_count || 1} units on scene</div>
               {assignedUnit && (
                 <div className="font-mono text-xs mt-1.5" style={{ color: '#10b981' }}>
-                  Dispatched: Unit {assignedUnit.replace('R-', '')}
+                  Dispatched: Unit {assignedUnit.replace('Unit ', '')}
                 </div>
               )}
             </button>
           );
         })}
-        {pendingIncidents.length === 0 && (
+        {dispatchedIncidents.length === 0 && (
           <div className="p-4 rounded-xl text-center" style={{ background: 'rgba(16,185,129,0.05)', border: '1px solid rgba(16,185,129,0.15)' }}>
-            <div className="font-condensed font-bold text-sm text-green-400">✓ ALL DISPATCHED</div>
-            <div className="font-mono text-xs text-white/30 mt-1">No pending dispatch required</div>
+            <div className="font-condensed font-bold text-sm text-green-400">✓ NO ACTIVE DISPATCHES</div>
+            <div className="font-mono text-xs text-white/30 mt-1">Awaiting authorized response plans</div>
           </div>
         )}
       </div>
 
-      {/* Available units */}
+      {/* Field units & responders */}
       <div className="flex flex-col gap-3 w-72 shrink-0 overflow-y-auto">
-        <div className="font-mono text-xs tracking-widest text-white/30">AVAILABLE UNITS</div>
-        {availableUnits.map((resp) => {
-          const isAssigned = resp.id in assignments;
-          const isSelected = selectedUnit === resp.id;
+        <div className="font-mono text-xs tracking-widest text-white/30">
+          FIELD UNITS ({currentResponders.length})
+        </div>
+        {currentResponders.map((resp: any) => {
+          const isAvailable = resp.status === 'AVAILABLE';
+          const isAssigned = resp.status === 'ASSIGNED' || resp.status === 'EN ROUTE' || resp.status === 'ON SCENE';
+          const statusColor = isAvailable ? '#10b981' : isAssigned ? '#06b6d4' : '#6b7280';
           return (
-            <button key={resp.id}
-              disabled={isAssigned}
-              onClick={() => setSelectedUnit(isSelected ? null : resp.id)}
+            <div key={resp.id}
               className="w-full text-left p-4 rounded-xl transition-all duration-200"
               style={{
-                background: isAssigned ? 'rgba(255,255,255,0.01)' : isSelected ? 'rgba(16,185,129,0.08)' : 'rgba(255,255,255,0.02)',
-                border: `1px solid ${isAssigned ? 'rgba(255,255,255,0.03)' : isSelected ? 'rgba(16,185,129,0.4)' : 'rgba(255,255,255,0.05)'}`,
-                opacity: isAssigned ? 0.5 : 1,
+                background: isAssigned ? 'rgba(6,182,212,0.04)' : 'rgba(255,255,255,0.02)',
+                border: `1px solid ${isAssigned ? 'rgba(6,182,212,0.25)' : 'rgba(255,255,255,0.05)'}`,
               }}>
               <div className="flex items-center gap-2 mb-1">
-                <div className="w-2 h-2 rounded-full" style={{ background: isAssigned ? '#6b7280' : '#10b981' }} />
+                <div className="w-2 h-2 rounded-full" style={{ background: statusColor }} />
                 <div className="font-condensed font-bold text-sm text-white">Unit {resp.name}</div>
-                {isAssigned && <div className="font-mono text-xs ml-auto text-white/30">ASSIGNED</div>}
+                <div className="font-mono text-xs ml-auto" style={{ color: statusColor }}>{resp.status}</div>
               </div>
               <div className="font-mono text-xs text-white/35">
-                {isAssigned ? `→ ${assignments[resp.id]}` : 'AVAILABLE FOR DISPATCH'}
+                {resp.current_incident_id ? `Assigned → ${resp.current_incident_id}` : isAvailable ? 'AVAILABLE FOR TASKING' : 'OFFLINE / STANDBY'}
               </div>
-            </button>
+            </div>
           );
         })}
-        {availableUnits.length === 0 && (
+        {currentResponders.length === 0 && (
           <div className="p-4 rounded-xl" style={{ background: 'rgba(220,38,38,0.05)', border: '1px solid rgba(220,38,38,0.2)' }}>
-            <div className="font-condensed font-bold text-sm text-red-400">NO UNITS AVAILABLE</div>
-            <div className="font-mono text-xs text-white/30 mt-1">All units are currently deployed</div>
+            <div className="font-condensed font-bold text-sm text-red-400">NO UNITS REGISTERED</div>
+            <div className="font-mono text-xs text-white/30 mt-1">No responder telemetry in database</div>
           </div>
         )}
       </div>
 
-      {/* Assign panel */}
-      <div className="flex-1 flex flex-col gap-4">
+      {/* Dispatch execution details panel */}
+      <div className="flex-1 flex flex-col gap-4 overflow-y-auto">
         <div className="p-5 rounded-xl" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
-          <div className="font-mono text-xs tracking-widest text-white/30 mb-4">DISPATCH ASSIGNMENT</div>
+          <div className="font-mono text-xs tracking-widest text-emerald-400 mb-4">DISPATCH EXECUTION MONITOR</div>
           <div className="space-y-3 mb-4">
             <div className="flex items-center justify-between py-2 border-b border-white/[0.04]">
               <div className="font-mono text-xs text-white/30">TARGET INCIDENT</div>
-              <div className="font-condensed font-bold text-sm" style={{ color: selectedIncident ? severityColors[incidents.find((i) => i.id === selectedIncident)?.severity ?? 'HIGH'] : 'rgba(255,255,255,0.2)' }}>
-                {selectedIncident ?? 'Not selected'}
+              <div className="font-condensed font-bold text-sm" style={{ color: selectedInc ? severityColors[selectedInc.severity] || '#06b6d4' : 'rgba(255,255,255,0.2)' }}>
+                {selectedInc ? `${selectedInc.id} · ${selectedInc.type}` : 'None Selected'}
               </div>
             </div>
             <div className="flex items-center justify-between py-2 border-b border-white/[0.04]">
-              <div className="font-mono text-xs text-white/30">UNIT TO DISPATCH</div>
-              <div className="font-condensed font-bold text-sm" style={{ color: selectedUnit ? '#10b981' : 'rgba(255,255,255,0.2)' }}>
-                {selectedUnit ? `Unit ${responders.find((r) => r.id === selectedUnit)?.name}` : 'Not selected'}
+              <div className="font-mono text-xs text-white/30">SCENE LOCATION</div>
+              <div className="font-mono text-xs text-white/70 truncate max-w-xs">
+                {selectedInc?.location || 'Incident Area'}
+              </div>
+            </div>
+            <div className="flex items-center justify-between py-2 border-b border-white/[0.04]">
+              <div className="font-mono text-xs text-white/30">DISPATCHED UNIT</div>
+              <div className="font-condensed font-bold text-sm text-emerald-400">
+                {matchingResp ? `Unit ${matchingResp.name}` : matchingDispatch?.unit ? `${matchingDispatch.unit}` : selectedInc?.assigned_responder_id ? `Unit ${selectedInc.assigned_responder_id}` : 'Unit Assigned'}
+              </div>
+            </div>
+            <div className="flex items-center justify-between py-2 border-b border-white/[0.04]">
+              <div className="font-mono text-xs text-white/30">DISPATCHED RESOURCE</div>
+              <div className="font-mono text-xs text-white/80">
+                {matchingDispatch?.resourceType ? `${matchingDispatch.qtyDispatched || 1}x ${matchingDispatch.resourceType}` : 'Emergency Rescue Unit'}
+              </div>
+            </div>
+            <div className="flex items-center justify-between py-2 border-b border-white/[0.04]">
+              <div className="font-mono text-xs text-white/30">AUTHORIZATION</div>
+              <div className="font-mono text-xs text-white/50">
+                {matchingDispatch?.approvedBy ? `Approved by ${matchingDispatch.approvedBy}` : 'Command Authorization'}
+              </div>
+            </div>
+            <div className="flex items-center justify-between py-2 border-b border-white/[0.04]">
+              <div className="font-mono text-xs text-white/30">OPERATIONAL STATUS</div>
+              <div className="font-mono text-xs font-bold text-emerald-400">
+                {selectedInc?.status === 'RESPONDING' ? 'DISPATCHED · EN ROUTE' : selectedInc?.status || 'DISPATCHED'}
               </div>
             </div>
           </div>
-
-          {/* Editable unit quantities */}
-          {selectedIncident && (
-            <div className="mb-4 p-3 rounded-lg space-y-3" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)' }}>
-              <div className="font-mono text-xs tracking-widest text-white/30">UNIT QUANTITIES</div>
-              <div className="grid grid-cols-2 gap-3">
-                {[
-                  { key: 'required', label: 'REQUIRED', field: requiredUnits },
-                  { key: 'dispatch', label: 'DISPATCH', field: dispatchUnits },
-                ].map(({ key, label, field }) => (
-                  <div key={key}>
-                    <div className="font-mono text-xs text-white/30 mb-1">{label} UNITS</div>
-                    <input
-                      type="number"
-                      min="0"
-                      value={field[selectedIncident] ?? ''}
-                      onChange={(e) => {
-                        if (key === 'required') setRequiredUnits((p) => ({ ...p, [selectedIncident]: e.target.value }));
-                        else setDispatchUnits((p) => ({ ...p, [selectedIncident]: e.target.value }));
-                      }}
-                      placeholder="—"
-                      className="w-full px-3 py-2 rounded font-mono text-sm text-center"
-                      style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: 'white', outline: 'none' }}
-                    />
-                  </div>
-                ))}
-              </div>
-              {unitErrors[selectedIncident] && (
-                <div className="font-mono text-xs" style={{ color: '#dc2626' }}>{unitErrors[selectedIncident]}</div>
-              )}
-              <button onClick={() => validateAndSave(selectedIncident)}
-                className="w-full py-2 rounded font-condensed font-bold text-xs tracking-widest transition-all duration-200"
-                style={{ background: 'rgba(6,182,212,0.1)', color: '#06b6d4', border: '1px solid rgba(6,182,212,0.25)' }}>
-                SAVE QUANTITIES
-              </button>
-            </div>
-          )}
-
-          <motion.button
-            onClick={assign}
-            disabled={!selectedIncident || !selectedUnit}
-            className="w-full py-3.5 rounded-xl font-condensed font-black text-base tracking-widest transition-all duration-200"
-            style={{
-              background: selectedIncident && selectedUnit ? '#dc2626' : 'rgba(255,255,255,0.04)',
-              color: selectedIncident && selectedUnit ? '#fff' : 'rgba(255,255,255,0.2)',
-              boxShadow: selectedIncident && selectedUnit ? '0 0 24px rgba(220,38,38,0.35)' : 'none',
-            }}
-            whileHover={selectedIncident && selectedUnit ? { scale: 1.02 } : {}}
-            whileTap={selectedIncident && selectedUnit ? { scale: 0.97 } : {}}>
-            DISPATCH UNIT →
-          </motion.button>
         </div>
 
-        {/* Assignment log */}
-        {Object.keys(assignments).length > 0 && (
-          <div className="flex-1 p-4 rounded-xl" style={{ background: 'rgba(16,185,129,0.04)', border: '1px solid rgba(16,185,129,0.15)' }}>
-            <div className="font-mono text-xs tracking-widest text-green-400 mb-3">DISPATCH LOG</div>
-            <div className="space-y-2">
-              {Object.entries(assignments).map(([unitId, incId]) => {
-                const unit = responders.find((r) => r.id === unitId);
-                const inc = incidents.find((i) => i.id === incId);
-                return (
-                  <div key={unitId} className="flex items-center gap-3 py-1.5 border-b border-white/[0.04]">
-                    <div className="w-1.5 h-1.5 rounded-full bg-green-400" />
-                    <div className="font-condensed font-semibold text-xs text-white">Unit {unit?.name}</div>
-                    <div className="font-mono text-xs text-white/30">→</div>
-                    <div className="font-mono text-xs" style={{ color: inc ? severityColors[inc.severity] : '#06b6d4' }}>{incId}</div>
-                    <div className="font-mono text-xs text-green-400 ml-auto">DISPATCHED</div>
-                  </div>
-                );
-              })}
-            </div>
+        {/* Real Dispatch log from PostgreSQL dispatch_records */}
+        <div className="flex-1 p-4 rounded-xl" style={{ background: 'rgba(16,185,129,0.04)', border: '1px solid rgba(16,185,129,0.15)' }}>
+          <div className="font-mono text-xs tracking-widest text-green-400 mb-3">
+            DISPATCH AUDIT LOG ({currentDispatches.length} RECORDS)
           </div>
-        )}
+          <div className="space-y-2 max-h-60 overflow-y-auto">
+            {currentDispatches.map((d: any) => (
+              <div key={d.id} className="flex items-center gap-3 py-1.5 border-b border-white/[0.04] text-xs">
+                <div className="w-1.5 h-1.5 rounded-full bg-green-400 shrink-0" />
+                <div className="font-condensed font-semibold text-white shrink-0">{d.unit}</div>
+                <div className="font-mono text-white/30 shrink-0">→</div>
+                <div className="font-mono text-cyan-400 shrink-0">{d.incident || 'Mission'}</div>
+                <div className="font-mono text-white/50 truncate flex-1">{d.destination || d.resourceType}</div>
+                <div className="font-mono text-green-400 shrink-0">{d.status || 'DISPATCHED'}</div>
+                <div className="font-mono text-white/30 shrink-0">{d.timestamp || ''}</div>
+              </div>
+            ))}
+            {currentDispatches.length === 0 && (
+              <div className="font-mono text-xs text-white/30 text-center py-4">
+                No dispatch records logged in database yet.
+              </div>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -2634,6 +2628,9 @@ export default function CommandHome() {
   const [agentsState, setAgentsState] = useState(activeAgentsData);
   const [liveIncidents, setLiveIncidents] = useState<any[]>(incidents);
   const [liveResponders, setLiveResponders] = useState<any[]>(responders);
+  const [liveDispatches, setLiveDispatches] = useState<any[]>([]);
+  const [liveHistory, setLiveHistory] = useState<any[]>([]);
+  const [emergencyCount, setEmergencyCount] = useState<number>(0);
   const [commandActiveRoute, setCommandActiveRoute] = useState<any>(null);
   const [centerViewMode, setCenterViewMode] = useState<'sphere' | 'map'>('sphere');
   const [isOrchestrating, setIsOrchestrating] = useState(false);
@@ -2677,6 +2674,15 @@ export default function CommandHome() {
         }
         if (overviewRes.data.responders) {
           setLiveResponders(overviewRes.data.responders);
+        }
+        if (overviewRes.data.dispatches) {
+          setLiveDispatches(overviewRes.data.dispatches);
+        }
+        if (overviewRes.data.history) {
+          setLiveHistory(overviewRes.data.history);
+        }
+        if (overviewRes.data.emergencyCount !== undefined) {
+          setEmergencyCount(overviewRes.data.emergencyCount);
         }
         if (overviewRes.data.pendingRecommendation) {
           setPendingRecommendation(overviewRes.data.pendingRecommendation);
@@ -2851,6 +2857,15 @@ export default function CommandHome() {
               }
               if (res?.data?.responders) {
                 setLiveResponders(res.data.responders);
+              }
+              if (res?.data?.dispatches) {
+                setLiveDispatches(res.data.dispatches);
+              }
+              if (res?.data?.history) {
+                setLiveHistory(res.data.history);
+              }
+              if (res?.data?.emergencyCount !== undefined) {
+                setEmergencyCount(res.data.emergencyCount);
               }
               if (res?.synced_at) {
                 setLastSyncTimestamp(res.synced_at);
@@ -3075,6 +3090,7 @@ export default function CommandHome() {
                   agentsList={agentsState}
                   incidentsList={liveIncidents}
                   respondersList={liveResponders}
+                  emergencyCount={emergencyCount}
                 />
               </div>
             )}
@@ -3089,7 +3105,7 @@ export default function CommandHome() {
                   <div className="p-4">
                     <div className="font-mono text-xs tracking-widest text-white/30 mb-3">ACTIVE INCIDENTS</div>
                     <div className="space-y-2">
-                      {sortIncidents(incidents).map((inc, i) => {
+                      {sortIncidents(liveIncidents).map((inc: any, i: number) => {
                         const iColor = severityColors[inc.severity];
                         const isSelected = selectedIncident === inc.id;
                         return (
@@ -3160,7 +3176,7 @@ export default function CommandHome() {
 
                   <div className="absolute inset-4">
                     {centerViewMode === 'sphere' ? (
-                      <ResQSphere selectedId={selectedIncident} onSelect={(id) => setSelectedIncident(id || null)} />
+                      <ResQSphere selectedId={selectedIncident} onSelect={(id) => setSelectedIncident(id || null)} incidentsList={liveIncidents} respondersList={liveResponders} />
                     ) : (
                       <div className="w-full h-full rounded-xl overflow-hidden border border-white/10 relative">
                         <OperationalMap
@@ -3210,14 +3226,14 @@ export default function CommandHome() {
                   <AnimatePresence>
                     {selectedIncident ? (
                       <IncidentCapsule key={selectedIncident} incidentId={selectedIncident}
-                        onClose={() => setSelectedIncident(null)} onApprove={onApprove} />
+                        onClose={() => setSelectedIncident(null)} onApprove={onApprove} incidentsList={liveIncidents} />
                     ) : (
                       <motion.div key="summary" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-3">
                         <div className="font-mono text-xs text-white/25 text-center mt-8">SELECT AN INCIDENT TO INSPECT</div>
                         {[
-                          { label: 'CRITICAL INCIDENTS', value: '2', color: '#dc2626' },
-                          { label: 'SOS REQUESTS', value: '47', color: '#f59e0b' },
-                          { label: 'RESPONDERS ACTIVE', value: '31', color: '#06b6d4' },
+                          { label: 'CRITICAL INCIDENTS', value: String(liveIncidents.filter((i: any) => i.severity === 'CRITICAL').length), color: '#dc2626' },
+                          { label: 'SOS REQUESTS', value: String(emergencyCount || liveIncidents.length), color: '#f59e0b' },
+                          { label: 'RESPONDERS ACTIVE', value: String(liveResponders.filter((r: any) => r.status === 'ASSIGNED' || r.status === 'EN ROUTE' || r.status === 'ON SCENE' || r.status === 'ACTIVE' || r.status === 'ON_THE_WAY' || r.status === 'ARRIVED').length), color: '#06b6d4' },
                           { label: 'SHELTERS AVAILABLE', value: '8', color: '#10b981' },
                         ].map((s) => (
                           <div key={s.label} className="p-4 rounded-xl"
@@ -3235,19 +3251,33 @@ export default function CommandHome() {
                 <div className="absolute bottom-0 left-60 right-0 flex items-center gap-4 px-6 py-2 glass overflow-x-auto"
                   style={{ borderTop: '1px solid rgba(255,255,255,0.04)' }}>
                   <div className="font-mono text-xs text-white/20 shrink-0">TIMELINE</div>
-                  {[
-                    { time: '14:02', event: 'INC-2851 created', color: '#f59e0b' },
-                    { time: '14:15', event: 'INC-2849 CRITICAL', color: '#dc2626' },
-                    { time: '14:23', event: 'Evacuation ordered Zone NE-4', color: '#f97316' },
-                    { time: '14:31', event: 'INC-2845 CONTAINED', color: '#10b981' },
-                  ].map((e, i) => (
-                    <div key={i} className="flex items-center gap-2 shrink-0">
-                      <div className="w-1.5 h-1.5 rounded-full" style={{ background: e.color }} />
-                      <div className="font-mono text-xs text-white/25">{e.time}</div>
-                      <div className="font-mono text-xs" style={{ color: e.color }}>{e.event}</div>
-                      {i < 3 && <div className="w-8 h-px ml-2" style={{ background: 'rgba(255,255,255,0.05)' }} />}
-                    </div>
-                  ))}
+                  {liveHistory.length > 0 ? (
+                    liveHistory.slice(0, 6).map((e: any, i: number) => {
+                      const timeStr = e.time || (e.created_at ? new Date(e.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'NOW');
+                      const st = e.new_status || e.to_status;
+                      const color = st === 'CRITICAL' ? '#dc2626' : (st === 'RESPONDING' || st === 'DISPATCHED') ? '#10b981' : '#06b6d4';
+                      return (
+                        <div key={e.id || i} className="flex items-center gap-2 shrink-0">
+                          <div className="w-1.5 h-1.5 rounded-full" style={{ background: color }} />
+                          <div className="font-mono text-xs text-white/25">{timeStr}</div>
+                          <div className="font-mono text-xs" style={{ color }}>{e.notes || `${e.incident_id}: ${st}`}</div>
+                          {i < Math.min(liveHistory.length, 6) - 1 && <div className="w-8 h-px ml-2" style={{ background: 'rgba(255,255,255,0.05)' }} />}
+                        </div>
+                      );
+                    })
+                  ) : (
+                    [
+                      { time: '14:02', event: 'System Monitoring Operational', color: '#10b981' },
+                      { time: '14:15', event: 'AI Multi-Agent Active', color: '#06b6d4' },
+                    ].map((e, i) => (
+                      <div key={i} className="flex items-center gap-2 shrink-0">
+                        <div className="w-1.5 h-1.5 rounded-full" style={{ background: e.color }} />
+                        <div className="font-mono text-xs text-white/25">{e.time}</div>
+                        <div className="font-mono text-xs" style={{ color: e.color }}>{e.event}</div>
+                        {i < 1 && <div className="w-8 h-px ml-2" style={{ background: 'rgba(255,255,255,0.05)' }} />}
+                      </div>
+                    ))
+                  )}
                 </div>
               </div>
             )}
@@ -3264,8 +3294,8 @@ export default function CommandHome() {
                   />
                 )}
                 {tab === 'evacuation' && <EvacuationTab />}
-                {tab === 'incidents' && <IncidentsTab onApprove={onApprove} />}
-                {tab === 'dispatch' && <DispatchTab />}
+                {tab === 'incidents' && <IncidentsTab incidentsList={liveIncidents} historyList={liveHistory} />}
+                {tab === 'dispatch' && <DispatchTab incidentsList={liveIncidents} respondersList={liveResponders} dispatchesList={liveDispatches} />}
               </div>
             )}
           </motion.div>
@@ -3289,7 +3319,7 @@ export default function CommandHome() {
 
       {/* Group A Bottom Human Approval Notification Banner */}
       <AnimatePresence>
-        {activePendingApproval && !showCompletionBanner && (
+        {activePendingApproval && !showCompletionBanner && (tab === 'home' || tab === 'sphere') && (
           <BottomApprovalBanner
             pendingRec={activePendingApproval}
             onAction={handleApprovalAction}
@@ -3299,7 +3329,7 @@ export default function CommandHome() {
 
       {/* 11/11 AI Orchestration Completion Notification Banner */}
       <AnimatePresence>
-        {showCompletionBanner && activeApproval && activeApproval.status === 'PENDING' && !showApproval && (
+        {showCompletionBanner && activeApproval && activeApproval.status === 'PENDING' && !showApproval && (tab === 'home' || tab === 'sphere') && (
           <BottomCompletionBanner
             planId={activeApproval?.plan_id || activeApproval?.approval_id}
             onOpenApproval={handleOpenApprovalModal}

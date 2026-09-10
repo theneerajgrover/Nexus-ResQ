@@ -5,45 +5,7 @@ import { resourcesApi, sheltersApi } from '../../api';
 
 type Section = 'overview' | 'shelters' | 'supplies' | 'ambulances' | 'equipment' | 'dispatches';
 
-// ── Data ──────────────────────────────────────────────────────────────────────
-const shelters = [
-  { id: 'SHL-01', name: 'Central Community Center', capacity: 450, occupancy: 263, status: 'OPEN', accessible: true, facilities: ['Medical', 'Food', 'Water'] },
-  { id: 'SHL-02', name: 'Riverside High School', capacity: 800, occupancy: 458, status: 'OPEN', accessible: true, facilities: ['Food', 'Water', 'Cots'] },
-  { id: 'SHL-03', name: 'Metro Sports Complex', capacity: 1200, occupancy: 1111, status: 'NEAR FULL', accessible: true, facilities: ['Food', 'Medical'] },
-  { id: 'SHL-04', name: 'North Community Hall', capacity: 300, occupancy: 0, status: 'ACTIVATING', accessible: false, facilities: ['Food', 'Water'] },
-];
-
-const supplies = [
-  { id: 'SUP-MED-01', name: 'Trauma Kits', category: 'MEDICAL', qty: 240, demand: 380, unit: 'kits', location: 'Depot North', lastSync: '14:28' },
-  { id: 'SUP-WAT-02', name: 'Water (500ml)', category: 'WATER', qty: 8400, demand: 6200, unit: 'bottles', location: 'Central Depot', lastSync: '14:30' },
-  { id: 'SUP-FOO-03', name: 'Emergency Rations', category: 'FOOD', qty: 1200, demand: 1600, unit: 'packs', location: 'Multiple', lastSync: '14:20' },
-  { id: 'SUP-MED-04', name: 'Blood O+ Units', category: 'MEDICAL', qty: 48, demand: 35, unit: 'units', location: 'Hospital A', lastSync: '14:31' },
-  { id: 'SUP-PPE-05', name: 'Protective Equipment', category: 'SAFETY', qty: 560, demand: 340, unit: 'sets', location: 'Depot South', lastSync: '14:25' },
-];
-
-const ambulances = [
-  { id: 'AMB-14', callsign: 'MEDIC 14', crew: 2, status: 'AVAILABLE', location: 'Station 3', lastUpdate: '14:30' },
-  { id: 'AMB-07', callsign: 'MEDIC 07', crew: 2, status: 'DISPATCHED', location: 'INC-2847 scene', lastUpdate: '14:18' },
-  { id: 'AMB-22', callsign: 'MEDIC 22', crew: 3, status: 'AVAILABLE', location: 'Station 1', lastUpdate: '14:29' },
-  { id: 'AMB-03', callsign: 'MEDIC 03', crew: 2, status: 'RETURNING', location: 'En route Station 2', lastUpdate: '14:26' },
-  { id: 'AMB-09', callsign: 'MEDIC 09', crew: 2, status: 'MAINTENANCE', location: 'Workshop', lastUpdate: '12:00' },
-];
-
-const equipment = [
-  { id: 'EQP-01', name: 'Hydraulic Rescue Sets', qty: 8, available: 5, status: 'PARTIAL', location: 'Station 3' },
-  { id: 'EQP-02', name: 'Rope & Harness Kits', qty: 24, available: 18, status: 'AVAILABLE', location: 'Depot North' },
-  { id: 'EQP-03', name: 'Thermal Imaging Units', qty: 4, available: 2, status: 'PARTIAL', location: 'Multiple' },
-  { id: 'EQP-04', name: 'Emergency Generators', qty: 12, available: 7, status: 'PARTIAL', location: 'Depot South' },
-  { id: 'EQP-05', name: 'Water Pumping Units', qty: 6, available: 0, status: 'DEPLETED', location: 'Field' },
-];
-
-// Dispatch records — approved operational decisions from Authority/Command
-const dispatchRecords = [
-  { id: 'DSP-041', resourceType: 'TRAUMA KITS', qtyApproved: 3, qtyDispatched: 3, destination: 'INC-2849 staging', incident: 'INC-2849', unit: 'Unit Alpha-14', status: 'DISPATCHED', approvedBy: 'Authority/Command', timestamp: '14:29' },
-  { id: 'DSP-039', resourceType: 'WATER BOTTLES', qtyApproved: 50, qtyDispatched: 50, destination: 'INC-2847 scene', incident: 'INC-2847', unit: 'Unit Bravo-7', status: 'DELIVERED', approvedBy: 'Authority/Command', timestamp: '14:15' },
-  { id: 'DSP-038', resourceType: 'HYDRAULIC RESCUE', qtyApproved: 1, qtyDispatched: 0, destination: 'INC-2849 zone', incident: 'INC-2849', unit: 'Unit Echo-3', status: 'PENDING', approvedBy: 'Authority/Command', timestamp: '14:12' },
-  { id: 'DSP-035', resourceType: 'ROPE KITS', qtyApproved: 2, qtyDispatched: 2, destination: 'INC-2845 area', incident: 'INC-2845', unit: 'Unit Delta-22', status: 'DELIVERED', approvedBy: 'Authority/Command', timestamp: '13:55' },
-];
+// ── Data — loaded from PostgreSQL via API, no hardcoded defaults ─────────────
 
 // ── Shared styles ─────────────────────────────────────────────────────────────
 const sectionColor: Record<Section, string> = {
@@ -74,10 +36,10 @@ function Bar({ value, max, color }: { value: number; max: number; color: string 
 
 // ── Tab content ───────────────────────────────────────────────────────────────
 function OverviewTab({
-  suppliesData = supplies,
-  sheltersData = shelters,
-  ambulancesData = ambulances,
-  dispatchesData = dispatchRecords,
+  suppliesData = [],
+  sheltersData = [],
+  ambulancesData = [],
+  dispatchesData = [],
 }: {
   suppliesData?: any[];
   sheltersData?: any[];
@@ -157,7 +119,24 @@ function OverviewTab({
   );
 }
 
-function AddNewModal({ title, fields, onClose }: { title: string; fields: { label: string; type: string; placeholder: string }[]; onClose: () => void }) {
+function AddNewModal({ title, fields, onClose, onSubmit }: { title: string; fields: { label: string; key: string; type: string; placeholder: string }[]; onClose: () => void; onSubmit: (values: Record<string, string>) => Promise<void> }) {
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSubmit = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      await onSubmit(values);
+      onClose();
+    } catch (err: any) {
+      setError(err?.message || 'Failed to save record');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-6" style={{ background: 'rgba(8,11,15,0.85)', backdropFilter: 'blur(6px)' }}>
       <motion.div initial={{ opacity: 0, scale: 0.93, y: 16 }} animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -170,23 +149,26 @@ function AddNewModal({ title, fields, onClose }: { title: string; fields: { labe
         </div>
         <div className="p-6 space-y-4">
           {fields.map((f) => (
-            <div key={f.label}>
+            <div key={f.key}>
               <div className="font-mono text-xs tracking-widest text-white/40 mb-1.5">{f.label}</div>
               <input type={f.type} placeholder={f.placeholder}
+                value={values[f.key] || ''}
+                onChange={(e) => setValues((p) => ({ ...p, [f.key]: e.target.value }))}
                 className="w-full px-4 py-2.5 rounded-lg font-mono text-xs"
                 style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', color: 'white', outline: 'none' }} />
             </div>
           ))}
-          <div className="font-mono text-xs text-white/20 pt-1">
-            Backend persistence required — connect to /api/resources to save
-          </div>
+          {error && (
+            <div className="font-mono text-xs text-red-400 pt-1">{error}</div>
+          )}
           <div className="flex gap-3 pt-1">
             <motion.button
               className="flex-1 py-3 rounded-xl font-condensed font-black text-sm tracking-widest"
-              style={{ background: '#10b981', color: '#080b0f' }}
-              whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }}
-              onClick={onClose}>
-              ADD RECORD
+              style={{ background: saving ? '#6b7280' : '#10b981', color: '#080b0f' }}
+              whileHover={saving ? {} : { scale: 1.02 }} whileTap={saving ? {} : { scale: 0.97 }}
+              onClick={handleSubmit}
+              disabled={saving}>
+              {saving ? 'SAVING...' : 'ADD RECORD'}
             </motion.button>
             <button onClick={onClose} className="px-5 py-3 rounded-xl font-condensed font-bold text-sm"
               style={{ background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.4)' }}>
@@ -200,11 +182,13 @@ function AddNewModal({ title, fields, onClose }: { title: string; fields: { labe
 }
 
 function SheltersTab({
-  sheltersData = shelters,
+  sheltersData = [],
   onUpdateShelter,
+  onRefresh,
 }: {
   sheltersData?: any[];
   onUpdateShelter?: (id: string, cap: number, occ: number) => void;
+  onRefresh?: () => void;
 } = {}) {
   const [editing, setEditing] = useState<string | null>(null);
   const [showAdd, setShowAdd] = useState(false);
@@ -296,18 +280,21 @@ function SheltersTab({
       <AnimatePresence>
         {showAdd && (
           <AddNewModal title="ADD SHELTER" onClose={() => setShowAdd(false)} fields={[
-            { label: 'SHELTER NAME', type: 'text', placeholder: 'e.g. East Community Hall' },
-            { label: 'CAPACITY', type: 'number', placeholder: 'e.g. 400' },
-            { label: 'CURRENT OCCUPANCY', type: 'number', placeholder: '0' },
-            { label: 'STATUS', type: 'text', placeholder: 'OPEN / ACTIVATING / NEAR FULL' },
-          ]} />
+            { label: 'SHELTER NAME', key: 'name', type: 'text', placeholder: 'e.g. East Community Hall' },
+            { label: 'CAPACITY', key: 'capacity', type: 'number', placeholder: 'e.g. 400' },
+            { label: 'CURRENT OCCUPANCY', key: 'occupancy', type: 'number', placeholder: '0' },
+            { label: 'STATUS', key: 'status', type: 'text', placeholder: 'OPEN / ACTIVATING / NEAR FULL' },
+          ]} onSubmit={async (v) => {
+            await sheltersApi.create({ name: v.name, capacity: parseInt(v.capacity) || 0, occupancy: parseInt(v.occupancy) || 0, status: v.status || undefined });
+            if (onRefresh) onRefresh();
+          }} />
         )}
       </AnimatePresence>
     </div>
   );
 }
 
-function SuppliesTab({ suppliesData = supplies }: { suppliesData?: any[] } = {}) {
+function SuppliesTab({ suppliesData = [], onRefresh }: { suppliesData?: any[]; onRefresh?: () => void } = {}) {
   const [showAdd, setShowAdd] = useState(false);
   return (
     <div className="h-full flex flex-col gap-3 overflow-hidden">
@@ -367,18 +354,21 @@ function SuppliesTab({ suppliesData = supplies }: { suppliesData?: any[] } = {})
       <AnimatePresence>
         {showAdd && (
           <AddNewModal title="ADD SUPPLY" onClose={() => setShowAdd(false)} fields={[
-            { label: 'RESOURCE NAME', type: 'text', placeholder: 'e.g. Blankets' },
-            { label: 'CATEGORY', type: 'text', placeholder: 'MEDICAL / FOOD / WATER / SAFETY' },
-            { label: 'QUANTITY', type: 'number', placeholder: 'e.g. 500' },
-            { label: 'LOCATION', type: 'text', placeholder: 'e.g. Depot North' },
-          ]} />
+            { label: 'RESOURCE NAME', key: 'name', type: 'text', placeholder: 'e.g. Blankets' },
+            { label: 'CATEGORY', key: 'category', type: 'text', placeholder: 'MEDICAL / FOOD / WATER / SAFETY' },
+            { label: 'QUANTITY', key: 'qty', type: 'number', placeholder: 'e.g. 500' },
+            { label: 'LOCATION', key: 'location', type: 'text', placeholder: 'e.g. Depot North' },
+          ]} onSubmit={async (v) => {
+            await resourcesApi.createSupply({ name: v.name, category: v.category, qty: parseInt(v.qty) || 0, unit: 'units', location: v.location });
+            if (onRefresh) onRefresh();
+          }} />
         )}
       </AnimatePresence>
     </div>
   );
 }
 
-function AmbulancesTab({ ambulancesData = ambulances }: { ambulancesData?: any[] } = {}) {
+function AmbulancesTab({ ambulancesData = [], onRefresh }: { ambulancesData?: any[]; onRefresh?: () => void } = {}) {
   const [showAdd, setShowAdd] = useState(false);
   return (
     <div className="h-full flex flex-col gap-3 overflow-hidden">
@@ -433,18 +423,21 @@ function AmbulancesTab({ ambulancesData = ambulances }: { ambulancesData?: any[]
       <AnimatePresence>
         {showAdd && (
           <AddNewModal title="ADD AMBULANCE" onClose={() => setShowAdd(false)} fields={[
-            { label: 'CALLSIGN', type: 'text', placeholder: 'e.g. MEDIC 31' },
-            { label: 'CREW SIZE', type: 'number', placeholder: 'e.g. 2' },
-            { label: 'HOME STATION', type: 'text', placeholder: 'e.g. Station 4' },
-            { label: 'STATUS', type: 'text', placeholder: 'AVAILABLE / MAINTENANCE' },
-          ]} />
+            { label: 'CALLSIGN', key: 'callsign', type: 'text', placeholder: 'e.g. MEDIC 31' },
+            { label: 'CREW SIZE', key: 'crew', type: 'number', placeholder: 'e.g. 2' },
+            { label: 'HOME STATION', key: 'location', type: 'text', placeholder: 'e.g. Station 4' },
+            { label: 'STATUS', key: 'status', type: 'text', placeholder: 'AVAILABLE / MAINTENANCE' },
+          ]} onSubmit={async (v) => {
+            await resourcesApi.createAmbulance({ callsign: v.callsign, crew: parseInt(v.crew) || 2, status: v.status || 'AVAILABLE', location: v.location });
+            if (onRefresh) onRefresh();
+          }} />
         )}
       </AnimatePresence>
     </div>
   );
 }
 
-function EquipmentTab({ equipmentData = equipment }: { equipmentData?: any[] } = {}) {
+function EquipmentTab({ equipmentData = [], onRefresh }: { equipmentData?: any[]; onRefresh?: () => void } = {}) {
   const [showAdd, setShowAdd] = useState(false);
   return (
     <div className="h-full flex flex-col gap-3 overflow-hidden">
@@ -482,18 +475,21 @@ function EquipmentTab({ equipmentData = equipment }: { equipmentData?: any[] } =
       <AnimatePresence>
         {showAdd && (
           <AddNewModal title="ADD EQUIPMENT" onClose={() => setShowAdd(false)} fields={[
-            { label: 'EQUIPMENT NAME', type: 'text', placeholder: 'e.g. Defibrillators' },
-            { label: 'TOTAL QUANTITY', type: 'number', placeholder: 'e.g. 10' },
-            { label: 'AVAILABLE', type: 'number', placeholder: 'e.g. 10' },
-            { label: 'LOCATION', type: 'text', placeholder: 'e.g. Station 1' },
-          ]} />
+            { label: 'EQUIPMENT NAME', key: 'name', type: 'text', placeholder: 'e.g. Defibrillators' },
+            { label: 'TOTAL QUANTITY', key: 'qty', type: 'number', placeholder: 'e.g. 10' },
+            { label: 'AVAILABLE', key: 'available', type: 'number', placeholder: 'e.g. 10' },
+            { label: 'LOCATION', key: 'location', type: 'text', placeholder: 'e.g. Station 1' },
+          ]} onSubmit={async (v) => {
+            await resourcesApi.createEquipment({ name: v.name, qty: parseInt(v.qty) || 0, available: parseInt(v.available) || 0, location: v.location });
+            if (onRefresh) onRefresh();
+          }} />
         )}
       </AnimatePresence>
     </div>
   );
 }
 
-function DispatchRecordsTab({ dispatchesData = dispatchRecords }: { dispatchesData?: any[] } = {}) {
+function DispatchRecordsTab({ dispatchesData = [] }: { dispatchesData?: any[] } = {}) {
   return (
     <div className="h-full space-y-3 overflow-y-auto">
       <div className="font-mono text-xs tracking-widest text-white/30 mb-1">
@@ -549,18 +545,24 @@ export default function ResourceManagerHome() {
     location.pathname.startsWith('/resources/equipment') ? 'equipment' :
     location.pathname.startsWith('/resources/dispatches') ? 'dispatches' : 'overview';
 
-  const [shelterList, setShelterList] = useState(shelters);
-  const [supplyList, setSupplyList] = useState(supplies);
-  const [ambulanceList, setAmbulanceList] = useState(ambulances);
-  const [equipmentList, setEquipmentList] = useState(equipment);
-  const [dispatchList, setDispatchList] = useState(dispatchRecords);
+  const [shelterList, setShelterList] = useState<any[]>([]);
+  const [supplyList, setSupplyList] = useState<any[]>([]);
+  const [ambulanceList, setAmbulanceList] = useState<any[]>([]);
+  const [equipmentList, setEquipmentList] = useState<any[]>([]);
+  const [dispatchList, setDispatchList] = useState<any[]>([]);
+
+  const refreshShelters = () => sheltersApi.getAll().then((r) => r.data && setShelterList(r.data)).catch(() => {});
+  const refreshSupplies = () => resourcesApi.getSupplies().then((r) => r.data && setSupplyList(r.data)).catch(() => {});
+  const refreshAmbulances = () => resourcesApi.getAmbulances().then((r) => r.data && setAmbulanceList(r.data)).catch(() => {});
+  const refreshEquipment = () => resourcesApi.getEquipment().then((r) => r.data && setEquipmentList(r.data)).catch(() => {});
+  const refreshDispatches = () => resourcesApi.getDispatches().then((r) => r.data && setDispatchList(r.data)).catch(() => {});
 
   useEffect(() => {
-    sheltersApi.getAll().then((r) => r.data && r.data.length && setShelterList(r.data)).catch(() => {});
-    resourcesApi.getSupplies().then((r) => r.data && r.data.length && setSupplyList(r.data)).catch(() => {});
-    resourcesApi.getAmbulances().then((r) => r.data && r.data.length && setAmbulanceList(r.data)).catch(() => {});
-    resourcesApi.getEquipment().then((r) => r.data && r.data.length && setEquipmentList(r.data)).catch(() => {});
-    resourcesApi.getDispatches().then((r) => r.data && r.data.length && setDispatchList(r.data)).catch(() => {});
+    refreshShelters();
+    refreshSupplies();
+    refreshAmbulances();
+    refreshEquipment();
+    refreshDispatches();
   }, []);
 
   const handleUpdateShelter = async (id: string, cap: number, occ: number) => {
@@ -606,10 +608,10 @@ export default function ResourceManagerHome() {
             className="h-full"
           >
             {section === 'overview' && <OverviewTab suppliesData={supplyList} sheltersData={shelterList} ambulancesData={ambulanceList} dispatchesData={dispatchList} />}
-            {section === 'shelters' && <SheltersTab sheltersData={shelterList} onUpdateShelter={handleUpdateShelter} />}
-            {section === 'supplies' && <SuppliesTab suppliesData={supplyList} />}
-            {section === 'ambulances' && <AmbulancesTab ambulancesData={ambulanceList} />}
-            {section === 'equipment' && <EquipmentTab equipmentData={equipmentList} />}
+            {section === 'shelters' && <SheltersTab sheltersData={shelterList} onUpdateShelter={handleUpdateShelter} onRefresh={refreshShelters} />}
+            {section === 'supplies' && <SuppliesTab suppliesData={supplyList} onRefresh={refreshSupplies} />}
+            {section === 'ambulances' && <AmbulancesTab ambulancesData={ambulanceList} onRefresh={refreshAmbulances} />}
+            {section === 'equipment' && <EquipmentTab equipmentData={equipmentList} onRefresh={refreshEquipment} />}
             {section === 'dispatches' && <DispatchRecordsTab dispatchesData={dispatchList} />}
           </motion.div>
         </AnimatePresence>
