@@ -133,6 +133,10 @@ export async function runMigration() {
     const { runLiveTrackingRoutingMigration } = await import('./migrate_live_tracking_routing');
     await runLiveTrackingRoutingMigration();
 
+    // Step 9: Run End-to-End Canonical Lifecycle schema enhancements
+    const { runE2ELifecycleMigration } = await import('./migrate_e2e_lifecycle');
+    await runE2ELifecycleMigration();
+
     // List all tables created
     const tablesRes = await dbClient.query(`
       SELECT table_name 
