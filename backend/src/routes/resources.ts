@@ -413,14 +413,22 @@ resourcesRouter.post('/supplies', async (req: Request, res: Response): Promise<v
     }
     const id = `SUP-${category?.substring(0, 3).toUpperCase() || 'GEN'}-${Math.floor(10 + Math.random() * 90)}`;
 
-    const insertRes = await query(
+    // Use upsert: if a supply with the same (name, category, location) already exists,
+    // update its qty/demand/unit/last_sync instead of inserting a duplicate row.
+    const upsertRes = await query(
       `INSERT INTO supplies (id, name, category, qty, demand, unit, location, last_sync)
        VALUES ($1, $2, $3, $4, $5, $6, $7, to_char(CURRENT_TIMESTAMP, 'HH24:MI'))
+       ON CONFLICT (name, category, location) DO UPDATE
+       SET qty = EXCLUDED.qty,
+           demand = EXCLUDED.demand,
+           unit = EXCLUDED.unit,
+           last_sync = EXCLUDED.last_sync,
+           updated_at = CURRENT_TIMESTAMP
        RETURNING id, name, category, qty, demand, unit, location, last_sync as "lastSync"`,
       [id, name, category.toUpperCase(), qty || 0, demand || 0, unit, location]
     );
 
-    res.status(201).json({ success: true, data: insertRes.rows[0] });
+    res.status(201).json({ success: true, data: upsertRes.rows[0] });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }

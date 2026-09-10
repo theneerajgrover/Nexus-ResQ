@@ -176,6 +176,15 @@ CREATE TABLE IF NOT EXISTS supplies (
 CREATE INDEX IF NOT EXISTS idx_supplies_category ON supplies(category);
 CREATE INDEX IF NOT EXISTS idx_supplies_name ON supplies(name);
 
+-- Prevent duplicate supplies with the same canonical identity (name + category + location)
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'uq_supplies_name_category_location'
+  ) THEN
+    ALTER TABLE supplies ADD CONSTRAINT uq_supplies_name_category_location UNIQUE (name, category, location);
+  END IF;
+END $$;
+
 -- 11. Ambulances Table
 CREATE TABLE IF NOT EXISTS ambulances (
     id VARCHAR(64) PRIMARY KEY, -- e.g. AMB-14
