@@ -25,6 +25,8 @@ export const weatherApi = {
     apiClient.get(`/weather/current?lat=${lat}&lon=${lon}`),
   searchLocations: (query: string) =>
     apiClient.get(`/weather/search?query=${encodeURIComponent(query)}`),
+  searchLocation: (query: string) =>
+    apiClient.get(`/weather/location-search?q=${encodeURIComponent(query)}`),
 };
 
 export const locationApi = {
