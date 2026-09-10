@@ -9,11 +9,12 @@ export const resourcesRouter = Router();
 // GET /api/resources/overview
 resourcesRouter.get('/overview', async (req: Request, res: Response): Promise<void> => {
   try {
-    const [suppliesRes, sheltersRes, ambulancesRes, dispatchesRes] = await Promise.all([
+    const [suppliesRes, sheltersRes, ambulancesRes, dispatchesRes, respondersRes] = await Promise.all([
       query(`SELECT count(*)::int as count FROM supplies WHERE qty < demand`),
       query(`SELECT count(*)::int as count FROM shelters WHERE status = 'NEAR FULL'`),
       query(`SELECT count(*)::int as count FROM ambulances WHERE status = 'AVAILABLE'`),
       query(`SELECT count(*)::int as count FROM dispatch_records WHERE status = 'PENDING'`),
+      query(`SELECT count(*)::int as count FROM responders WHERE status = 'AVAILABLE'`),
     ]);
 
     res.json({
@@ -23,6 +24,7 @@ resourcesRouter.get('/overview', async (req: Request, res: Response): Promise<vo
         nearFullShelters: sheltersRes.rows[0]?.count || 0,
         availableAmbulances: ambulancesRes.rows[0]?.count || 0,
         pendingDispatches: dispatchesRes.rows[0]?.count || 0,
+        availableResponders: respondersRes.rows[0]?.count || 0,
       },
     });
   } catch (err: any) {
@@ -200,6 +202,30 @@ resourcesRouter.post('/equipment', async (req: Request, res: Response): Promise<
        VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING id, name, qty, available, status, location`,
       [id, name, totalQty, availableQty, status, location]
+    );
+
+    res.status(201).json({ success: true, data: insertRes.rows[0] });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/resources/responders
+resourcesRouter.post('/responders', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { name, callsign, status, latitude, longitude } = req.body;
+    if (!name) {
+      res.status(400).json({ success: false, error: 'name is required.' });
+      return;
+    }
+    const id = `R-${Math.floor(10 + Math.random() * 90)}`;
+    const responderStatus = status || 'AVAILABLE';
+
+    const insertRes = await query(
+      `INSERT INTO responders (id, name, callsign, status, latitude, longitude)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING id, name, callsign, status, latitude as lat, longitude as lng`,
+      [id, name, callsign || name.substring(0, 10).toUpperCase(), responderStatus, latitude || 28.6139, longitude || 77.2090]
     );
 
     res.status(201).json({ success: true, data: insertRes.rows[0] });

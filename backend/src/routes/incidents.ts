@@ -121,7 +121,29 @@ incidentsRouter.patch('/:id', async (req: Request, res: Response): Promise<void>
     );
 
     if (updateRes.rowCount && updateRes.rowCount > 0) {
-      res.json({ success: true, data: updateRes.rows[0] });
+      const inc = updateRes.rows[0];
+      if (status === 'RESOLVED' || status === 'COMPLETED') {
+        // Release assigned responder
+        await query(
+          `UPDATE responders
+           SET status = 'AVAILABLE', current_incident_id = NULL, updated_at = CURRENT_TIMESTAMP
+           WHERE current_incident_id = $1 OR id = $2`,
+          [id, inc.assigned_responder_id || null]
+        ).catch(() => {});
+
+        // Release associated ambulances
+        await query(
+          `UPDATE ambulances SET status = 'AVAILABLE', updated_at = CURRENT_TIMESTAMP WHERE last_update ILIKE $1`,
+          [`%${id}%`]
+        ).catch(() => {});
+
+        // Restore equipment
+        await query(
+          `UPDATE equipment SET available = LEAST(qty, available + 1), status = 'AVAILABLE', updated_at = CURRENT_TIMESTAMP WHERE available < qty`
+        ).catch(() => {});
+      }
+
+      res.json({ success: true, data: inc });
     } else {
       res.status(404).json({ success: false, error: `Incident ${id} not found.` });
     }

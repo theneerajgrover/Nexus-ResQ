@@ -348,15 +348,28 @@ trackingRouter.post('/status', async (req: Request, res: Response): Promise<void
       );
     }
 
-    // Update responders table
+    // Update responders table and release resources on completion
     if (effectiveResponderId) {
-      const responderOperationalStatus = normalizedStatus === 'COMPLETED' ? 'AVAILABLE' : normalizedStatus;
+      const isCompleted = normalizedStatus === 'COMPLETED';
+      const responderOperationalStatus = isCompleted ? 'AVAILABLE' : normalizedStatus;
       await query(
         `UPDATE responders
-         SET status = $1, updated_at = CURRENT_TIMESTAMP
-         WHERE id = $2`,
-        [responderOperationalStatus, effectiveResponderId]
+         SET status = $1, current_incident_id = CASE WHEN $2 = TRUE THEN NULL ELSE current_incident_id END, updated_at = CURRENT_TIMESTAMP
+         WHERE id = $3`,
+        [responderOperationalStatus, isCompleted, effectiveResponderId]
       );
+
+      if (isCompleted && effectiveIncidentId) {
+        // Release any associated ambulances
+        await query(
+          `UPDATE ambulances SET status = 'AVAILABLE', updated_at = CURRENT_TIMESTAMP WHERE last_update ILIKE $1`,
+          [`%${effectiveIncidentId}%`]
+        ).catch(() => {});
+        // Restore equipment
+        await query(
+          `UPDATE equipment SET available = LEAST(qty, available + 1), status = 'AVAILABLE', updated_at = CURRENT_TIMESTAMP WHERE available < qty`
+        ).catch(() => {});
+      }
     }
 
     // Create persistent backend notification for Authority, Citizen, and Field Team
