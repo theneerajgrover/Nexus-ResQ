@@ -83,7 +83,19 @@ orchestratorRouter.post('/:planId/approve', optionalAuth, async (req: Request, r
     });
   } catch (err: any) {
     console.error('[Orchestrator Error] POST /:planId/approve:', err.message);
-    res.status(500).json({ success: false, error: err.message || 'Failed to approve plan.' });
+    if (err.code === 'INCIDENT_NOT_FOUND' || err.code === 'PLAN_NOT_FOUND') {
+      res.status(404).json({ success: false, code: err.code, error: err.message });
+      return;
+    }
+    if (err.code === 'INCIDENT_STATE_CONFLICT' || err.code === 'RESOURCE_SHORTAGE') {
+      res.status(409).json({ success: false, code: err.code, error: err.message });
+      return;
+    }
+    res.status(500).json({
+      success: false,
+      code: 'INTERNAL_SERVER_ERROR',
+      error: 'Failed to approve plan. An internal error occurred while processing dispatch assignments.',
+    });
   }
 });
 
@@ -105,7 +117,15 @@ orchestratorRouter.post('/:planId/reject', optionalAuth, async (req: Request, re
     });
   } catch (err: any) {
     console.error('[Orchestrator Error] POST /:planId/reject:', err.message);
-    res.status(500).json({ success: false, error: err.message || 'Failed to reject plan.' });
+    if (err.code === 'INCIDENT_NOT_FOUND' || err.code === 'PLAN_NOT_FOUND') {
+      res.status(404).json({ success: false, code: err.code, error: err.message });
+      return;
+    }
+    res.status(500).json({
+      success: false,
+      code: 'INTERNAL_SERVER_ERROR',
+      error: 'Failed to reject plan. An internal error occurred.',
+    });
   }
 });
 

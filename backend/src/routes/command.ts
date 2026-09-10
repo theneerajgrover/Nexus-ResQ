@@ -316,7 +316,22 @@ commandRouter.post('/recommendations/:id/action', async (req: Request, res: Resp
     });
   } catch (err: any) {
     console.error('[Command Error] /recommendations/:id/action:', err.message);
-    res.status(500).json({ success: false, error: err.message || 'Failed to process plan authorization.' });
+    const statusCode =
+      err.statusCode ||
+      (['INCIDENT_NOT_FOUND', 'PLAN_NOT_FOUND'].includes(err.code)
+        ? 404
+        : ['INCIDENT_STATE_CONFLICT', 'RESOURCE_SHORTAGE', 'STATE_CONFLICT'].includes(err.code)
+        ? 409
+        : 500);
+
+    // Prevent exposing raw database schema or constraint details to the client
+    const safeError = statusCode === 500 ? 'Failed to process dispatch plan authorization.' : err.message;
+
+    res.status(statusCode).json({
+      success: false,
+      error: safeError,
+      code: err.code || (statusCode === 500 ? 'INTERNAL_SERVER_ERROR' : 'ACTION_FAILED'),
+    });
   }
 });
 

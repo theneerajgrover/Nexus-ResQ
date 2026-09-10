@@ -148,65 +148,53 @@ weatherRouter.get('/current', async (req: Request, res: Response): Promise<void>
   }
 });
 
-// GET /api/weather/search?query=... (Worldwide location search for Authority Weather)
-weatherRouter.get('/search', async (req: Request, res: Response): Promise<void> => {
+import { locationService } from '../services/locationService';
+
+// GET /api/weather/search or /api/weather/location-search?query=... or ?q=...
+// Multi-provider real place search (villages, towns, cities, districts, localities)
+const handleWeatherLocationSearch = async (req: Request, res: Response): Promise<void> => {
   try {
     const queryStr = ((req.query.query || req.query.q || '') as string).trim();
     if (!queryStr || queryStr.length < 2) {
-      res.status(400).json({ success: false, error: 'Search query of at least 2 characters is required.' });
-      return;
-    }
-
-    // Check if query is latitude, longitude
-    const coordMatch = queryStr.match(/^(-?\d+(\.\d+)?),\s*(-?\d+(\.\d+)?)$/);
-    if (coordMatch) {
-      const lat = parseFloat(coordMatch[1]);
-      const lon = parseFloat(coordMatch[3]);
-      res.json({
-        success: true,
-        data: [{
-          name: `${lat.toFixed(4)}°, ${lon.toFixed(4)}°`,
-          region: 'Coordinates Location',
-          country: 'Global Grid',
-          latitude: lat,
-          longitude: lon,
-        }]
+      res.status(400).json({
+        success: false,
+        error: 'Please enter a city, village or place (minimum 2 characters).',
       });
       return;
     }
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 6000);
-
-    const geoUrl = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(queryStr)}&count=8&language=en&format=json`;
-    const apiRes = await fetch(geoUrl, { signal: controller.signal });
-    clearTimeout(timeout);
-
-    if (!apiRes.ok) {
-      throw new Error(`Open-Meteo Geocoding returned status ${apiRes.status}`);
+    const searchResult = await locationService.searchPlaces(queryStr);
+    if (!searchResult.success || !searchResult.location) {
+      res.status(404).json({
+        success: false,
+        error: searchResult.error || 'Location not found. Try a city, village, town or locality name.',
+        location: null,
+        results: [],
+        data: [],
+      });
+      return;
     }
 
-    const json = (await apiRes.json()) as any;
-    const results = (json.results || []).map((r: any) => ({
-      id: r.id,
-      name: r.name,
-      region: r.admin1 || r.admin2 || '',
-      country: r.country || '',
-      countryCode: r.country_code || '',
-      latitude: r.latitude,
-      longitude: r.longitude,
-      elevation: r.elevation,
-      timezone: r.timezone,
-    }));
-
-    res.json({ success: true, data: results });
+    res.json({
+      success: true,
+      location: searchResult.location,
+      results: searchResult.results,
+      data: searchResult.results, // backward-compatible alias for existing clients
+    });
   } catch (err: any) {
-    console.warn('[Weather Search Warning]: Failed to search location:', err.message);
-    res.status(500).json({ success: false, error: 'Failed to search location.' });
+    console.warn('[Weather Location Search Warning]:', err.message);
+    res.status(500).json({
+      success: false,
+      error: 'Unable to search this location. Please try again.',
+      location: null,
+      results: [],
+      data: [],
+    });
   }
-});
+};
 
-import { locationService } from '../services/locationService';
+weatherRouter.get('/search', handleWeatherLocationSearch);
+weatherRouter.get('/location-search', handleWeatherLocationSearch);
 
 // Handler for reverse geocoding (supports both GET and POST)
 async function handleReverseGeocode(req: Request, res: Response): Promise<void> {

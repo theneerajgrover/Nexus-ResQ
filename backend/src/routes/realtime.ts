@@ -9,6 +9,17 @@ const clients: Response[] = [];
 
 // GET /api/events
 realtimeRouter.get('/', (req: Request, res: Response) => {
+  const isSSE = req.headers.accept?.includes('text/event-stream');
+  if (req.headers.accept?.includes('application/json') && !isSSE) {
+    res.json({
+      status: 'ok',
+      service: 'nexus-resq-realtime-sse',
+      connectedClients: clients.length,
+      timestamp: Date.now(),
+    });
+    return;
+  }
+
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');

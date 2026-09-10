@@ -110,13 +110,17 @@ approvalsRouter.post('/:id/approve', authenticateToken, async (req: Request, res
       `, [id]);
       if (planRes.rowCount && planRes.rowCount > 0) {
         const plan = planRes.rows[0];
+        if (!plan.incident_id) {
+          res.status(404).json({ success: false, error: `Plan ${id} is not associated with any valid incident.`, code: 'INCIDENT_NOT_FOUND' });
+          return;
+        }
         const newAppId = `APP-${Date.now().toString().slice(-6)}`;
         const insApp = await query(`
           INSERT INTO approvals (approval_id, incident_id, plan_id, requested_by, approval_type, status, expires_at)
           VALUES ($1, $2, $3, 'AI_ORCHESTRATOR', 'DISPATCH_PLAN', 'PENDING', CURRENT_TIMESTAMP + interval '4 hours')
           ON CONFLICT DO NOTHING
           RETURNING *
-        `, [newAppId, plan.incident_id || 'INC-2849', plan.plan_id || plan.id || id]);
+        `, [newAppId, plan.incident_id, plan.plan_id || plan.id || id]);
         if (insApp.rowCount && insApp.rowCount > 0) {
           appRes = insApp;
         }
@@ -124,7 +128,7 @@ approvalsRouter.post('/:id/approve', authenticateToken, async (req: Request, res
     }
 
     if (appRes.rowCount === 0) {
-      res.status(404).json({ success: false, error: `Approval record ${id} not found.` });
+      res.status(404).json({ success: false, error: `Approval record ${id} not found.`, code: 'APPROVAL_NOT_FOUND' });
       return;
     }
 
@@ -141,6 +145,7 @@ approvalsRouter.post('/:id/approve', authenticateToken, async (req: Request, res
       res.status(409).json({
         success: false,
         error: `Approval ${id} is already ${approval.status} and cannot be modified.`,
+        code: 'STATE_CONFLICT',
       });
       return;
     }
@@ -165,7 +170,21 @@ approvalsRouter.post('/:id/approve', authenticateToken, async (req: Request, res
     });
   } catch (err: any) {
     console.error('[Approvals Error] POST /:id/approve:', err.message);
-    res.status(500).json({ success: false, error: err.message || 'Failed to approve dispatch plan.' });
+    const statusCode =
+      err.statusCode ||
+      (err.code === 'INCIDENT_NOT_FOUND'
+        ? 404
+        : ['INCIDENT_STATE_CONFLICT', 'RESOURCE_SHORTAGE', 'STATE_CONFLICT'].includes(err.code)
+        ? 409
+        : 500);
+
+    const safeError = statusCode === 500 ? 'Failed to approve dispatch plan.' : err.message;
+
+    res.status(statusCode).json({
+      success: false,
+      error: safeError,
+      code: err.code || (statusCode === 500 ? 'INTERNAL_SERVER_ERROR' : 'ACTION_FAILED'),
+    });
   }
 });
 
