@@ -16,6 +16,8 @@ incidentsRouter.get('/', async (req: Request, res: Response): Promise<void> => {
     const result = await query(`
       SELECT 
         i.id, 
+        i.request_id as "requestId",
+        i.request_id,
         i.title, 
         i.type, 
         i.severity, 

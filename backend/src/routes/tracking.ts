@@ -346,6 +346,18 @@ trackingRouter.post('/status', async (req: Request, res: Response): Promise<void
          WHERE incident_id = $2`,
         [normalizedStatus, effectiveIncidentId]
       );
+
+      // Update orchestration_plans table execution status
+      const isCompleted = normalizedStatus === 'COMPLETED';
+      await query(
+        `UPDATE orchestration_plans
+         SET execution_status = $1,
+             status = CASE WHEN $2 = TRUE THEN 'COMPLETED' ELSE status END,
+             execution_completed_at = CASE WHEN $2 = TRUE THEN CURRENT_TIMESTAMP ELSE execution_completed_at END,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE incident_id = $3`,
+        [normalizedStatus, isCompleted, effectiveIncidentId]
+      ).catch(() => {});
     }
 
     // Update responders table and release resources on completion
@@ -421,12 +433,15 @@ trackingRouter.post('/status', async (req: Request, res: Response): Promise<void
 export async function fetchTrackingBundle(incidentId: string) {
   // 1. Query Incident
   const incRes = await query(
-    `SELECT i.*, m.id as mission_id, m.responder_id, r.name as responder_name, r.callsign as responder_callsign,
+    `SELECT i.*, m.id as mission_id, m.status as mission_status, m.plan_id as mission_plan_id,
+            m.responder_id, r.name as responder_name, r.callsign as responder_callsign,
             r.status as responder_status, r.latitude as responder_lat, r.longitude as responder_lng,
-            r.accuracy as responder_accuracy, r.heading as responder_heading, r.speed as responder_speed
+            r.accuracy as responder_accuracy, r.heading as responder_heading, r.speed as responder_speed,
+            p.plan_id, p.status as plan_status, p.execution_status as plan_execution_status
      FROM incidents i
      LEFT JOIN missions m ON m.incident_id = i.id
      LEFT JOIN responders r ON r.id = COALESCE(m.responder_id, i.assigned_responder_id)
+     LEFT JOIN orchestration_plans p ON (p.incident_id = i.id AND p.status IN ('APPROVED', 'EXECUTING', 'COMPLETED', 'WAITING_FOR_APPROVAL'))
      WHERE i.id = $1`,
     [incidentId]
   );
@@ -558,18 +573,29 @@ export async function fetchTrackingBundle(incidentId: string) {
   );
 
   // 6. Calculate Lifecycle Step
-  const currentStatus = (incident.status || citizenRequest?.status || 'REQUESTED').toUpperCase();
+  const rawStatus = (
+    incident.mission_status ||
+    citizenRequest?.status ||
+    incident.plan_execution_status ||
+    incident.status ||
+    'REQUESTED'
+  ).toUpperCase();
+
   const normalizedStatus: LifecycleStatus =
-    currentStatus === 'RECEIVED'
+    rawStatus === 'RECEIVED'
       ? 'REQUESTED'
-      : currentStatus === 'EN ROUTE' || currentStatus === 'EN_ROUTE'
+      : rawStatus === 'EN ROUTE' || rawStatus === 'EN_ROUTE'
       ? 'ON_THE_WAY'
-      : currentStatus === 'ON SCENE' || currentStatus === 'ON_SCENE'
+      : rawStatus === 'ON SCENE' || rawStatus === 'ON_SCENE'
       ? 'ARRIVED'
-      : currentStatus === 'RESOLVED'
+      : rawStatus === 'RESOLVED' || rawStatus === 'CLOSED'
       ? 'COMPLETED'
-      : LIFECYCLE_STEPS.includes(currentStatus as LifecycleStatus)
-      ? (currentStatus as LifecycleStatus)
+      : rawStatus === 'RESPONDING' || rawStatus === 'DISPATCHED' || rawStatus === 'EXECUTING'
+      ? 'ASSIGNED'
+      : rawStatus === 'WAITING_FOR_APPROVAL' || rawStatus === 'PROCESSING'
+      ? 'ACCEPTED'
+      : LIFECYCLE_STEPS.includes(rawStatus as LifecycleStatus)
+      ? (rawStatus as LifecycleStatus)
       : 'REQUESTED';
 
   const currentStepIndex = LIFECYCLE_STEPS.indexOf(normalizedStatus);

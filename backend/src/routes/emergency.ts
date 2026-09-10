@@ -103,15 +103,65 @@ emergencyRouter.post('/request', optionalAuth, async (req: Request, res: Respons
     const effectiveType = (emergencyType || emergency_type || 'GENERAL_EMERGENCY').toUpperCase();
     const effectiveDetails = (details || description || '').trim() || `Assistance requested: ${assistanceArray.join(', ')}`;
     const userId = req.user?.id || null;
+    const idempotencyKey = ((req.headers['x-idempotency-key'] || req.body.idempotency_key || req.body.idempotencyKey || '') as string).trim() || null;
 
-    // Duplicate Protection: check if an identical request was submitted in the last 5 seconds
+    // 1. Idempotency Check: check if request with identical idempotency token exists
+    if (idempotencyKey) {
+      const idempRes = await query(
+        `SELECT id, incident_id FROM emergency_requests WHERE idempotency_key = $1 LIMIT 1`,
+        [idempotencyKey]
+      ).catch(() => ({ rowCount: 0, rows: [] }));
+
+      if (idempRes.rowCount && idempRes.rowCount > 0) {
+        const existing = idempRes.rows[0];
+        const fullReq = await query(`SELECT * FROM emergency_requests WHERE id = $1`, [existing.id]);
+        if (fullReq.rowCount && fullReq.rowCount > 0) {
+          const saved = fullReq.rows[0];
+          res.status(200).json({
+            success: true,
+            message: 'Emergency request retrieved via idempotency token.',
+            data: {
+              id: saved.id,
+              requestId: saved.id,
+              incidentId: existing.incident_id,
+              incident_id: existing.incident_id,
+              status: saved.status,
+              location: saved.location,
+              formattedAddress: saved.formatted_address || saved.location,
+              latitude: saved.latitude ? parseFloat(saved.latitude) : null,
+              longitude: saved.longitude ? parseFloat(saved.longitude) : null,
+              accuracy: saved.accuracy ? parseFloat(saved.accuracy) : null,
+              deviceLatitude: saved.device_latitude ? parseFloat(saved.device_latitude) : null,
+              deviceLongitude: saved.device_longitude ? parseFloat(saved.device_longitude) : null,
+              incidentLatitude: saved.incident_latitude ? parseFloat(saved.incident_latitude) : null,
+              incidentLongitude: saved.incident_longitude ? parseFloat(saved.incident_longitude) : null,
+              placeId: saved.place_id,
+              locality: saved.locality,
+              city: saved.city,
+              district: saved.district,
+              state: saved.state,
+              postalCode: saved.postal_code,
+              country: saved.country,
+              locationVerified: saved.location_verified,
+              locationSource: saved.location_source,
+              assistance_types: saved.assistance_types,
+              assistance_needed: saved.assistance_requested,
+            },
+          });
+          return;
+        }
+      }
+    }
+
+    // 2. Duplicate Protection: check if an identical request was submitted in the last 15 seconds
     const dupCheck = await query(
       `SELECT id, incident_id FROM emergency_requests 
        WHERE (requester_ip = $1 OR (user_id IS NOT NULL AND user_id = $2))
          AND emergency_type = $3
-         AND created_at >= NOW() - INTERVAL '5 seconds'
+         AND (location = $4 OR formatted_address = $5)
+         AND created_at >= NOW() - INTERVAL '15 seconds'
        ORDER BY created_at DESC LIMIT 1`,
-      [clientIp, userId, effectiveType]
+      [clientIp, userId, effectiveType, effectiveLocation, formattedAddress]
     ).catch(() => ({ rowCount: 0, rows: [] }));
 
     if (dupCheck.rowCount && dupCheck.rowCount > 0) {
@@ -169,7 +219,7 @@ emergencyRouter.post('/request', optionalAuth, async (req: Request, res: Respons
     try {
       await client.query('BEGIN');
 
-      // 5. Insert into PostgreSQL emergency_requests table with full location persistence
+      // 5. Insert into PostgreSQL emergency_requests table with full location persistence and idempotency
       const insertRes = await client.query(
         `INSERT INTO emergency_requests (
           id, user_id, emergency_type, assistance_types, assistance_requested, location, latitude, longitude,
@@ -178,7 +228,7 @@ emergencyRouter.post('/request', optionalAuth, async (req: Request, res: Respons
           device_latitude, device_longitude, device_accuracy_meters, device_location_timestamp,
           incident_latitude, incident_longitude, incident_accuracy_meters,
           formatted_address, place_id, village, locality, city, district, state, postal_code, country,
-          location_source, location_verified, location_confidence, location_resolved_at
+          location_source, location_verified, location_confidence, location_resolved_at, idempotency_key
         ) VALUES (
           $1, $2, $3, $4, $4, $5, $6, $7,
           $8, $9, $10, $10, $11, $11, $12, 'WEB_EMERGENCY',
@@ -186,7 +236,7 @@ emergencyRouter.post('/request', optionalAuth, async (req: Request, res: Respons
           $14, $15, $16, $17,
           $18, $19, $20,
           $21, $22, $23, $24, $25, $26, $27, $28, $29,
-          $30, $31, $32, $33
+          $30, $31, $32, $33, $34
         )
         RETURNING *`,
         [
@@ -223,6 +273,7 @@ emergencyRouter.post('/request', optionalAuth, async (req: Request, res: Respons
           locationVerified,
           locationConfidence,
           resolvedAt,
+          idempotencyKey,
         ]
       );
       savedRequest = insertRes.rows[0];
@@ -462,7 +513,33 @@ emergencyRouter.get('/requests', async (_req: Request, res: Response): Promise<v
 emergencyRouter.get('/requests/:id', async (req: Request, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
-    const result = await query(`SELECT * FROM emergency_requests WHERE id = $1`, [id]);
+    const result = await query(`
+      SELECT 
+        eq.*,
+        i.status as incident_status,
+        i.title as incident_title,
+        i.severity as incident_severity,
+        m.id as mission_id,
+        m.status as mission_status,
+        COALESCE(m.plan_id, p.plan_id) as mission_plan_id,
+        p.plan_id,
+        p.status as plan_status,
+        p.approval_status as plan_approval_status,
+        p.execution_status as plan_execution_status,
+        r.name as responder_name,
+        r.callsign as responder_callsign,
+        r.status as responder_status,
+        r.latitude as responder_lat,
+        r.longitude as responder_lng
+      FROM emergency_requests eq
+      LEFT JOIN incidents i ON (i.id = eq.incident_id OR i.request_id = eq.id)
+      LEFT JOIN missions m ON m.incident_id = i.id
+      LEFT JOIN orchestration_plans p ON (p.incident_id = i.id AND p.status IN ('APPROVED', 'EXECUTING', 'COMPLETED', 'WAITING_FOR_APPROVAL'))
+      LEFT JOIN responders r ON r.id = COALESCE(eq.assigned_responder_id, m.responder_id, i.assigned_responder_id)
+      WHERE eq.id = $1 OR eq.incident_id = $1
+      ORDER BY eq.created_at DESC
+      LIMIT 1
+    `, [id]);
     if (result.rowCount && result.rowCount > 0) {
       res.json({ success: true, data: result.rows[0] });
     } else {

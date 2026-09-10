@@ -54,6 +54,10 @@ respondersRouter.get('/mission', async (req: Request, res: Response): Promise<vo
         m.id,
         m.incident_id as "incidentId",
         COALESCE(i.request_id, eq.id) as "requestId",
+        COALESCE(m.plan_id, p.plan_id) as "planId",
+        COALESCE(m.plan_id, p.plan_id) as plan_id,
+        COALESCE(m.dispatch_id, d.id) as "dispatchId",
+        COALESCE(m.dispatch_id, d.id) as dispatch_id,
         m.title,
         COALESCE(i.formatted_address, i.location, eq.formatted_address, eq.location, m.location) as "destinationAddress",
         COALESCE(i.formatted_address, i.location, eq.formatted_address, eq.location, m.location) as location,
@@ -81,6 +85,8 @@ respondersRouter.get('/mission', async (req: Request, res: Response): Promise<vo
       LEFT JOIN incidents i ON m.incident_id = i.id
       LEFT JOIN emergency_requests eq ON (eq.incident_id = i.id OR eq.id = i.request_id)
       LEFT JOIN responders r ON m.responder_id = r.id
+      LEFT JOIN orchestration_plans p ON (p.incident_id = m.incident_id AND p.status IN ('APPROVED', 'EXECUTING', 'COMPLETED', 'WAITING_FOR_APPROVAL'))
+      LEFT JOIN dispatch_records d ON (d.incident_id = m.incident_id)
       ${whereClause}
       ORDER BY m.created_at DESC
       LIMIT 1
@@ -126,6 +132,19 @@ respondersRouter.patch('/:id', async (req: Request, res: Response): Promise<void
     const { id } = req.params;
     const { status, latitude, longitude, current_incident_id } = req.body;
 
+    // Foreign key validation: if current_incident_id is provided and non-null, verify it exists in incidents table
+    if (current_incident_id !== undefined && current_incident_id !== null && current_incident_id !== '') {
+      const incCheck = await query(`SELECT id FROM incidents WHERE id = $1`, [current_incident_id]);
+      if (!incCheck.rowCount || incCheck.rowCount === 0) {
+        res.status(404).json({
+          success: false,
+          error: `Incident '${current_incident_id}' does not exist in active database records.`,
+          code: 'INCIDENT_NOT_FOUND',
+        });
+        return;
+      }
+    }
+
     const result = await query(
       `UPDATE responders
        SET status = COALESCE($1, status),
@@ -152,7 +171,7 @@ respondersRouter.patch('/:id', async (req: Request, res: Response): Promise<void
 respondersRouter.patch('/mission/:id/status', async (req: Request, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
-    const { status } = req.body;
+    const { status, actor, notes } = req.body;
 
     if (!status) {
       res.status(400).json({ success: false, error: 'Status is required.' });
@@ -171,7 +190,6 @@ respondersRouter.patch('/mission/:id/status', async (req: Request, res: Response
       [missionStatus, id]
     );
 
-    // Also update responder table status if responder is assigned
     if (missionRes.rowCount && missionRes.rowCount > 0) {
       const missionRow = missionRes.rows[0];
       const responderId = missionRow.responder_id;
@@ -187,27 +205,74 @@ respondersRouter.patch('/mission/:id/status', async (req: Request, res: Response
         );
       }
 
-      if (isCompleted && incidentId) {
-        // Update incident to RESOLVED if completed
+      if (incidentId) {
+        const incidentStatus = isCompleted ? 'RESOLVED' : status;
         await query(
-          `UPDATE incidents SET status = 'RESOLVED', updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
-          [incidentId]
+          `UPDATE incidents SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
+          [incidentStatus, incidentId]
         );
+
+        // Update emergency_requests
+        await query(
+          `UPDATE emergency_requests SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE incident_id = $2`,
+          [status, incidentId]
+        );
+
+        // Update orchestration_plans execution status
+        await query(
+          `UPDATE orchestration_plans 
+           SET execution_status = $1,
+               status = CASE WHEN $2 = TRUE THEN 'COMPLETED' ELSE status END,
+               execution_completed_at = CASE WHEN $2 = TRUE THEN CURRENT_TIMESTAMP ELSE execution_completed_at END,
+               updated_at = CURRENT_TIMESTAMP 
+           WHERE incident_id = $3`,
+          [status, isCompleted, incidentId]
+        );
+
+        // Record in incident_status_history
+        await query(
+          `INSERT INTO incident_status_history (id, incident_id, previous_status, new_status, actor, responder_id, notes, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP)`,
+          [
+            `HIST-${Date.now()}`,
+            incidentId,
+            missionRow.status,
+            status,
+            actor || 'Field Responder',
+            responderId || null,
+            notes || `Operational state transitioned to ${status} via field update.`,
+          ]
+        ).catch(() => {});
+
+        // Broadcast real-time SSE event
+        const { broadcastEvent } = await import('./realtime');
+        broadcastEvent('INCIDENT_STATUS_CHANGED', {
+          incidentId,
+          responderId: responderId || null,
+          previousStatus: missionRow.status,
+          newStatus: status,
+          actor: actor || 'Field Responder',
+          notes: notes || `Operational state transitioned to ${status}`,
+          timestamp: Date.now(),
+        });
+      }
+
+      if (isCompleted && incidentId) {
         // Release any associated ambulance
         await query(
           `UPDATE ambulances SET status = 'AVAILABLE', updated_at = CURRENT_TIMESTAMP WHERE last_update ILIKE $1`,
           [`%${incidentId}%`]
-        );
+        ).catch(() => {});
         // Restore equipment
         await query(
           `UPDATE equipment SET available = LEAST(qty, available + 1), status = 'AVAILABLE', updated_at = CURRENT_TIMESTAMP WHERE available < qty`
-        );
+        ).catch(() => {});
       }
 
       // Log audit
       await query(
         `INSERT INTO audit_logs (id, actor, action, entity, metadata) VALUES ($1, $2, $3, $4, $5)`,
-        [`AUD-${Date.now()}`, 'Field Responder', 'MISSION_STATUS_UPDATED', 'missions', JSON.stringify({ missionId: id, newStatus: status, isCompleted })]
+        [`AUD-${Date.now()}`, actor || 'Field Responder', 'MISSION_STATUS_UPDATED', 'missions', JSON.stringify({ missionId: id, newStatus: status, isCompleted })]
       ).catch(() => {});
 
       res.json({ success: true, data: missionRes.rows[0] });
