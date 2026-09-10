@@ -57,7 +57,7 @@ app.use((req, res, next) => {
 });
 
 // ── Health Check ─────────────────────────────────────────────
-app.get('/health', async (req, res) => {
+app.get(['/health', '/api/health'], async (req, res) => {
   const dbStatus = await testConnection();
   res.json({
     status: 'ok',

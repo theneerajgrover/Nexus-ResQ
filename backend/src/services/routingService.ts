@@ -385,7 +385,7 @@ export async function evaluateRouteSafety(
 
   try {
     const hazardsRes = await query(`
-      SELECT 
+      SELECT DISTINCT ON (i.id)
         i.id,
         i.title,
         i.type,
@@ -397,6 +397,9 @@ export async function evaluateRouteSafety(
       FROM incidents i
       LEFT JOIN missions m ON m.incident_id = i.id
       WHERE i.status NOT IN ('COMPLETED', 'RESOLVED')
+        AND i.latitude IS NOT NULL
+        AND i.longitude IS NOT NULL
+      ORDER BY i.id
       LIMIT 20
     `);
 
@@ -500,6 +503,8 @@ export async function evaluateRouteSafety(
       }
     }
 
+    const uniqueFactors = Array.from(new Set(factors));
+
     // Cap score between 0 and 100
     score = Math.max(0, Math.min(100, score));
 
@@ -519,7 +524,7 @@ export async function evaluateRouteSafety(
       ...route,
       safetyStatus: status,
       safetyScore: score,
-      riskFactors: factors,
+      riskFactors: uniqueFactors,
       isSafest: false,
       selected: false,
     };

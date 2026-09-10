@@ -610,6 +610,297 @@ export class LocationService {
       error: `Could not verify "${raw}" as a real geographical location. Please select a recognized address from suggestions or provide nearby landmarks.`,
     };
   }
+
+  /**
+   * Search real geographical places (villages, towns, cities, districts, localities, landmarks).
+   * Multi-provider cascade:
+   * 1. Google Geocoding API (if active)
+   * 2. OpenStreetMap / Nominatim Search API (comprehensive coverage of villages, tehsils, towns, cities, districts)
+   * 3. Open-Meteo Geocoding Search API (city-level fallback)
+   */
+  public async searchPlaces(queryStr: string): Promise<{
+    success: boolean;
+    location?: {
+      name: string;
+      latitude: number;
+      longitude: number;
+      city: string | null;
+      locality: string | null;
+      village: string | null;
+      district: string | null;
+      state: string | null;
+      country: string | null;
+      place_id?: string | null;
+    };
+    results: Array<{
+      id: string | number;
+      name: string;
+      fullName: string;
+      latitude: number;
+      longitude: number;
+      city?: string | null;
+      locality?: string | null;
+      village?: string | null;
+      district?: string | null;
+      state?: string | null;
+      country?: string | null;
+      countryCode?: string | null;
+      region?: string | null;
+      admin1?: string | null;
+    }>;
+    error?: string;
+  }> {
+    const raw = (queryStr || '').trim();
+    if (!raw || raw.length < 2) {
+      return { success: false, results: [], error: 'Search query must be at least 2 characters.' };
+    }
+
+    // Check if input is a literal coordinate pair (e.g. "30.9010, 75.8570")
+    const coordMatch = raw.match(/^(-?\d+(\.\d+)?),\s*(-?\d+(\.\d+)?)$/);
+    if (coordMatch) {
+      const lat = parseFloat(coordMatch[1]);
+      const lon = parseFloat(coordMatch[3]);
+      const check = this.validateCoordinates(lat, lon);
+      if (check.valid) {
+        const rev = await this.reverseGeocode(lat, lon);
+        const name = rev.data?.formatted_address || `${lat.toFixed(4)}°, ${lon.toFixed(4)}°`;
+        const item = {
+          id: `coord_${lat}_${lon}`,
+          name,
+          fullName: name,
+          latitude: lat,
+          longitude: lon,
+          city: rev.data?.city || null,
+          locality: rev.data?.locality || null,
+          village: rev.data?.village || null,
+          district: rev.data?.district || null,
+          state: rev.data?.state || null,
+          country: rev.data?.country || null,
+          region: rev.data?.state || 'Coordinates Location',
+        };
+        return {
+          success: true,
+          location: {
+            name,
+            latitude: lat,
+            longitude: lon,
+            city: rev.data?.city || null,
+            locality: rev.data?.locality || null,
+            village: rev.data?.village || null,
+            district: rev.data?.district || null,
+            state: rev.data?.state || null,
+            country: rev.data?.country || null,
+            place_id: rev.data?.place_id || null,
+          },
+          results: [item],
+        };
+      }
+    }
+
+    const apiKey = this.getGoogleApiKey();
+
+    // 1. Attempt Google Geocoding API if key is available
+    if (apiKey) {
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 5000);
+
+        const googleUrl = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(raw)}&key=${apiKey}`;
+        const res = await fetch(googleUrl, { signal: controller.signal });
+        clearTimeout(timeout);
+
+        if (res.ok) {
+          const json: any = await res.json();
+          if (json.status === 'OK' && Array.isArray(json.results) && json.results.length > 0) {
+            const parsedResults = json.results.map((r: any, idx: number) => {
+              const p = this.parseGoogleAddressComponents(r.address_components);
+              const lat = r.geometry?.location?.lat;
+              const lon = r.geometry?.location?.lng;
+              const mainName = r.formatted_address.split(',')[0];
+              return {
+                id: r.place_id || `google_${idx}`,
+                name: mainName,
+                fullName: r.formatted_address,
+                latitude: lat,
+                longitude: lon,
+                city: p.city || p.locality,
+                locality: p.locality,
+                village: p.village,
+                district: p.district,
+                state: p.state,
+                country: p.country,
+                region: p.state,
+                admin1: p.state,
+              };
+            }).filter((r: any) => typeof r.latitude === 'number' && typeof r.longitude === 'number');
+
+            if (parsedResults.length > 0) {
+              const best = parsedResults[0];
+              return {
+                success: true,
+                location: {
+                  name: best.fullName,
+                  latitude: best.latitude,
+                  longitude: best.longitude,
+                  city: best.city || null,
+                  locality: best.locality || null,
+                  village: best.village || null,
+                  district: best.district || null,
+                  state: best.state || null,
+                  country: best.country || null,
+                  place_id: String(best.id),
+                },
+                results: parsedResults,
+              };
+            }
+          }
+        }
+      } catch (err: any) {
+        console.warn('[LocationService] Google Geocoding place search notice:', err.message);
+      }
+    }
+
+    // 2. OpenStreetMap / Nominatim Search API (Full coverage of real villages, towns, tehsils, cities, districts)
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 6000);
+
+      const osmUrl = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(raw)}&format=json&addressdetails=1&limit=8`;
+      const res = await fetch(osmUrl, {
+        headers: {
+          'User-Agent': 'NexusResQ-EmergencyPlatform/1.0 (emergency-location-service)',
+          'Accept': 'application/json',
+        },
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+
+      if (res.ok) {
+        const json: any = await res.json();
+        if (Array.isArray(json) && json.length > 0) {
+          const parsedResults = json.map((item: any) => {
+            const addr = item.address || {};
+            const lat = parseFloat(item.lat);
+            const lon = parseFloat(item.lon);
+            const city = addr.city || addr.town || addr.municipality || null;
+            const locality = addr.suburb || addr.quarter || addr.neighbourhood || addr.city_district || null;
+            const village = addr.village || addr.hamlet || addr.isolated_dwelling || null;
+            const district = addr.county || addr.state_district || null;
+            const state = addr.state || null;
+            const country = addr.country || null;
+            const countryCode = (addr.country_code || '').toUpperCase();
+
+            const mainName = item.name || locality || village || city || item.display_name.split(',')[0].trim();
+            const regionParts = [district, state, country].filter(Boolean);
+            const cleanFullName = [mainName, ...regionParts.filter((p: string) => p !== mainName)].join(', ');
+
+            return {
+              id: item.osm_id ? `osm_${item.osm_id}` : `osm_${lat}_${lon}`,
+              name: mainName,
+              fullName: item.display_name || cleanFullName,
+              latitude: lat,
+              longitude: lon,
+              city: city || village || locality,
+              locality,
+              village,
+              district,
+              state,
+              country,
+              countryCode,
+              region: state || district,
+              admin1: state,
+            };
+          }).filter((r: any) => !isNaN(r.latitude) && !isNaN(r.longitude));
+
+          if (parsedResults.length > 0) {
+            const best = parsedResults[0];
+            return {
+              success: true,
+              location: {
+                name: best.fullName,
+                latitude: best.latitude,
+                longitude: best.longitude,
+                city: best.city || null,
+                locality: best.locality || null,
+                village: best.village || null,
+                district: best.district || null,
+                state: best.state || null,
+                country: best.country || null,
+                place_id: String(best.id),
+              },
+              results: parsedResults,
+            };
+          }
+        }
+      }
+    } catch (err: any) {
+      console.warn('[LocationService] OpenStreetMap Nominatim search notice:', err.message);
+    }
+
+    // 3. Open-Meteo Geocoding Search Fallback
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000);
+
+      const omUrl = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(raw)}&count=8&language=en&format=json`;
+      const res = await fetch(omUrl, { signal: controller.signal });
+      clearTimeout(timeout);
+
+      if (res.ok) {
+        const json: any = await res.json();
+        if (Array.isArray(json.results) && json.results.length > 0) {
+          const parsedResults = json.results.map((r: any) => {
+            const region = r.admin1 || r.admin2 || '';
+            const fullName = [r.name, region, r.country].filter(Boolean).join(', ');
+            return {
+              id: r.id,
+              name: r.name,
+              fullName,
+              latitude: r.latitude,
+              longitude: r.longitude,
+              city: r.name,
+              locality: null,
+              village: null,
+              district: r.admin2 || null,
+              state: r.admin1 || null,
+              country: r.country || null,
+              countryCode: r.country_code || '',
+              region,
+              admin1: r.admin1 || '',
+            };
+          });
+
+          if (parsedResults.length > 0) {
+            const best = parsedResults[0];
+            return {
+              success: true,
+              location: {
+                name: best.fullName,
+                latitude: best.latitude,
+                longitude: best.longitude,
+                city: best.city,
+                locality: null,
+                village: null,
+                district: best.district,
+                state: best.state,
+                country: best.country,
+                place_id: `om_${best.id}`,
+              },
+              results: parsedResults,
+            };
+          }
+        }
+      }
+    } catch (err: any) {
+      console.warn('[LocationService] Open-Meteo search fallback notice:', err.message);
+    }
+
+    return {
+      success: false,
+      results: [],
+      error: `Location "${raw}" not found. Try entering a city, village, town, or locality name.`,
+    };
+  }
 }
 
 export const locationService = new LocationService();

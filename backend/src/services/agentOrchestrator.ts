@@ -974,10 +974,23 @@ export class AgentOrchestratorService {
     const planRow = planRes.rows[0];
     const recRow = recLookupRes.rows[0];
 
+    if (!appRow && !planRow && !recRow) {
+      const notFoundErr = new Error(`Operational Plan or Approval '${planId}' was not found in active records.`);
+      (notFoundErr as any).code = 'PLAN_NOT_FOUND';
+      throw notFoundErr;
+    }
+
     const canonicalPlanId = appRow?.plan_id || planRow?.plan_id || recRow?.id || planId;
     let canonicalApprovalId = appRow?.approval_id || planRow?.approval_id;
     const canonicalExecId = planRow?.id;
-    const incidentId = appRow?.incident_id || planRow?.incident_id || recRow?.incident_id || 'INC-2849';
+    const incidentId = appRow?.incident_id || planRow?.incident_id || recRow?.incident_id;
+
+    if (!incidentId) {
+      const missingIncErr = new Error(`No incident identifier associated with plan '${canonicalPlanId}'.`);
+      (missingIncErr as any).code = 'INCIDENT_NOT_FOUND';
+      throw missingIncErr;
+    }
+
     const currentApprovalStatus = appRow?.status;
     const currentPlanStatus = planRow?.status;
 
@@ -1055,9 +1068,25 @@ export class AgentOrchestratorService {
       rec = recRes.rows[0];
     }
 
-    // Fetch incident details
+    // Fetch and strictly validate incident existence in PostgreSQL
     const incDetailsRes = await query(`SELECT * FROM incidents WHERE id = $1`, [incidentId]);
-    const incRow = incDetailsRes.rows[0] || {};
+    if (!incDetailsRes.rowCount || incDetailsRes.rowCount === 0) {
+      const notFoundErr: any = new Error(`Incident '${incidentId}' not found in database. Cannot execute dispatch plan for a non-existent incident.`);
+      notFoundErr.code = 'INCIDENT_NOT_FOUND';
+      notFoundErr.statusCode = 404;
+      throw notFoundErr;
+    }
+    const incRow = incDetailsRes.rows[0];
+
+    // Validate incident status is executable
+    if (decision === 'APPROVED') {
+      if (['COMPLETED', 'RESOLVED', 'CLOSED', 'CANCELLED'].includes(incRow.status)) {
+        const conflictErr: any = new Error(`Incident '${incidentId}' is in '${incRow.status}' status and cannot accept new dispatch operations.`);
+        conflictErr.code = 'INCIDENT_STATE_CONFLICT';
+        conflictErr.statusCode = 409;
+        throw conflictErr;
+      }
+    }
 
     let assignedUnitName = '';
     let assignedRespId = '';
@@ -1194,7 +1223,10 @@ export class AgentOrchestratorService {
               `, [incidentId, resp.id]);
               console.log(`[DB Mutation] Responder ${resp.name} (${resp.id}) set to ASSIGNED for ${incidentId}`);
             } else {
-              throw new Error('Resource shortage: No responders are currently available for automatic dispatch. Please release active units or await mission conclusion.');
+              const shortageErr: any = new Error('Resource shortage: No responders are currently available for automatic dispatch. Please release active units or await mission conclusion.');
+              shortageErr.code = 'RESOURCE_SHORTAGE';
+              shortageErr.statusCode = 409;
+              throw shortageErr;
             }
           }
         } else {
