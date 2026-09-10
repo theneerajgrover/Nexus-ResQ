@@ -109,7 +109,7 @@ export default function HumanApprovalPopup() {
 
   const currentItem = activeItems[currentIndex] || activeItems[0];
 
-  if (!isAuthority || !currentItem || location.pathname === '/command') {
+  if (!isAuthority || !currentItem || location.pathname.startsWith('/command')) {
     return null;
   }
 

@@ -42,6 +42,7 @@ export const locationApi = {
 export const incidentsApi = {
   getAll: () => apiClient.get('/incidents'),
   getById: (id: string) => apiClient.get(`/incidents/${id}`),
+  getHistory: (id: string) => apiClient.get(`/incidents/${id}/history`),
   create: (data: any) => apiClient.post('/incidents', data),
   update: (id: string, data: any) => apiClient.patch(`/incidents/${id}`, data),
 };
@@ -92,6 +93,8 @@ export const emergencyApi = {
 // ── Shelters Service ─────────────────────────────────────────
 export const sheltersApi = {
   getAll: () => apiClient.get('/shelters'),
+  create: (data: { name: string; capacity: number; occupancy?: number; status?: string; address?: string; accessible?: boolean; facilities?: string[] }) =>
+    apiClient.post('/shelters', data),
   updateStatus: (id: string, data: { occupancy?: number; capacity?: number; status?: string }) =>
     apiClient.patch(`/shelters/${id}`, data),
 };
@@ -131,6 +134,12 @@ export const resourcesApi = {
   getEquipment: () => apiClient.get('/resources/equipment'),
   getDispatches: () => apiClient.get('/resources/dispatches'),
   createDispatch: (data: any) => apiClient.post('/resources/dispatches', data),
+  createSupply: (data: { name: string; category: string; qty: number; demand?: number; unit: string; location: string }) =>
+    apiClient.post('/resources/supplies', data),
+  createAmbulance: (data: { callsign: string; crew?: number; status?: string; location: string }) =>
+    apiClient.post('/resources/ambulances', data),
+  createEquipment: (data: { name: string; qty: number; available?: number; location: string }) =>
+    apiClient.post('/resources/equipment', data),
 };
 
 // ── Command Center Service ───────────────────────────────────
