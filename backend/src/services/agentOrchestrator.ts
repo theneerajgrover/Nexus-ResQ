@@ -1247,11 +1247,13 @@ export class AgentOrchestratorService {
 
         await client.query(`
           INSERT INTO missions (
-            id, incident_id, responder_id, title, location, latitude, longitude, status, priority, casualties_reported, hazards, perimeter, notes, updated_at
+            id, incident_id, responder_id, title, location, latitude, longitude, status, priority, casualties_reported, hazards, perimeter, notes, plan_id, dispatch_id, updated_at
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, 'ASSIGNED', $8, 0, $9, '250m', $10, CURRENT_TIMESTAMP)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, 'ASSIGNED', $8, 0, $9, '250m', $10, $11, $12, CURRENT_TIMESTAMP)
           ON CONFLICT (id) DO UPDATE
           SET responder_id = EXCLUDED.responder_id,
+              plan_id = EXCLUDED.plan_id,
+              dispatch_id = EXCLUDED.dispatch_id,
               latitude = COALESCE(EXCLUDED.latitude, missions.latitude),
               longitude = COALESCE(EXCLUDED.longitude, missions.longitude),
               location = COALESCE(EXCLUDED.location, missions.location),
@@ -1267,16 +1269,18 @@ export class AgentOrchestratorService {
           missionLng,
           incRow.severity || 'HIGH',
           [incRow.type || 'GENERAL'],
-          `${formattedUnitName} automatically dispatched via human authorization.`
+          `${formattedUnitName} automatically dispatched via human authorization.`,
+          canonicalPlanId,
+          dispatchId,
         ]);
 
         // G. Update emergency_requests and incidents tables
         if (assignedRespId) {
           await client.query(`
             UPDATE emergency_requests 
-            SET assigned_responder_id = $1, status = 'ASSIGNED', updated_at = CURRENT_TIMESTAMP 
-            WHERE incident_id = $2
-          `, [assignedRespId, incidentId]);
+            SET assigned_responder_id = $1, assigned_mission_id = $2, status = 'ASSIGNED', updated_at = CURRENT_TIMESTAMP 
+            WHERE incident_id = $3
+          `, [assignedRespId, missionId, incidentId]);
 
           await client.query(`
             UPDATE incidents 
@@ -1284,6 +1288,12 @@ export class AgentOrchestratorService {
             WHERE id = $2
           `, [assignedRespId, incidentId]);
         } else {
+          await client.query(`
+            UPDATE emergency_requests 
+            SET assigned_mission_id = $1, status = 'ASSIGNED', updated_at = CURRENT_TIMESTAMP 
+            WHERE incident_id = $2
+          `, [missionId, incidentId]);
+
           await client.query(`
             UPDATE incidents 
             SET status = 'RESPONDING', pending = FALSE, updated_at = CURRENT_TIMESTAMP 
