@@ -39,4 +39,4 @@ Thumbs.db
 # Environment files - NEVER COMMIT SECRETS
 .env
 .env.*
-!.env.example
+!.env.examplescratch/ 
