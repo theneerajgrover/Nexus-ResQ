@@ -465,15 +465,44 @@ function SheltersTab({
   sheltersData = [],
   onUpdateShelter,
   onRefresh,
+  onReportIncident,
 }: {
   sheltersData?: any[];
-  onUpdateShelter?: (id: string, cap: number, occ: number) => void;
+  onUpdateShelter?: (id: string, cap: number, occ: number) => Promise<any>;
   onRefresh?: () => void;
+  onReportIncident?: (shelter: any) => void;
 } = {}) {
   const [editing, setEditing] = useState<string | null>(null);
   const [showAdd, setShowAdd] = useState(false);
   const [tempCap, setTempCap] = useState<Record<string, number>>({});
   const [tempOcc, setTempOcc] = useState<Record<string, number>>({});
+  const [editError, setEditError] = useState<Record<string, string | null>>({});
+  const [saving, setSaving] = useState<Record<string, boolean>>({});
+
+  const handleSaveShelter = async (s: any) => {
+    const cap = tempCap[s.id] !== undefined ? tempCap[s.id] : s.capacity;
+    const occ = tempOcc[s.id] !== undefined ? tempOcc[s.id] : s.occupancy;
+    if (cap < occ) {
+      setEditError((p) => ({
+        ...p,
+        [s.id]: `Capacity cannot be reduced below ${occ} — ${occ} places are currently occupied.`,
+      }));
+      return;
+    }
+    setSaving((p) => ({ ...p, [s.id]: true }));
+    setEditError((p) => ({ ...p, [s.id]: null }));
+    try {
+      if (onUpdateShelter) {
+        await onUpdateShelter(s.id, cap, occ);
+      }
+      setEditing(null);
+    } catch (err: any) {
+      const msg = err?.response?.data?.error || err?.message || 'Failed to update shelter capacity.';
+      setEditError((p) => ({ ...p, [s.id]: msg }));
+    } finally {
+      setSaving((p) => ({ ...p, [s.id]: false }));
+    }
+  };
 
   return (
     <div className="h-full flex flex-col gap-3 overflow-hidden">
@@ -517,38 +546,61 @@ function SheltersTab({
                   <div key={f} className="font-mono text-xs px-2 py-0.5 rounded" style={{ background: 'rgba(6,182,212,0.08)', color: '#06b6d4' }}>{f}</div>
                 ))}
               </div>
-              <button onClick={() => setEditing(editing === s.id ? null : s.id)}
-                className="font-condensed font-bold text-xs px-3 py-1.5 rounded w-full transition-all duration-200"
-                style={{ background: 'rgba(6,182,212,0.08)', color: '#06b6d4', border: '1px solid rgba(6,182,212,0.2)' }}>
-                {editing === s.id ? 'CANCEL' : 'UPDATE CAPACITY'}
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    setEditing(editing === s.id ? null : s.id);
+                    setEditError((p) => ({ ...p, [s.id]: null }));
+                  }}
+                  className="flex-1 font-condensed font-bold text-xs px-3 py-1.5 rounded transition-all duration-200 cursor-pointer"
+                  style={{ background: 'rgba(6,182,212,0.08)', color: '#06b6d4', border: '1px solid rgba(6,182,212,0.2)' }}>
+                  {editing === s.id ? 'CANCEL' : 'UPDATE CAPACITY'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onReportIncident?.(s)}
+                  className="font-condensed font-bold text-xs px-3 py-1.5 rounded transition-all duration-200 flex items-center gap-1.5 cursor-pointer"
+                  style={{ background: 'rgba(239,68,68,0.12)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)' }}
+                  title={`Report incident at ${s.name}`}
+                >
+                  <span>📢</span>
+                  REPORT INCIDENT
+                </button>
+              </div>
               <AnimatePresence>
                 {editing === s.id && (
                   <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
-                    className="mt-3 pt-3 border-t border-white/5 grid grid-cols-2 gap-3">
-                    {['Capacity', 'Occupancy'].map((field) => (
-                      <div key={field}>
-                        <div className="font-mono text-xs text-white/30 mb-1">{field.toUpperCase()}</div>
-                        <input type="number"
-                          defaultValue={field === 'Capacity' ? s.capacity : s.occupancy}
-                          onChange={(e) => {
-                            const val = parseInt(e.target.value) || 0;
-                            if (field === 'Capacity') setTempCap((p) => ({ ...p, [s.id]: val }));
-                            else setTempOcc((p) => ({ ...p, [s.id]: val }));
-                          }}
-                          className="w-full px-3 py-2 rounded font-mono text-sm"
-                          style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: 'white', outline: 'none' }} />
+                    className="mt-3 pt-3 border-t border-white/5 space-y-3">
+                    <div className="grid grid-cols-2 gap-3">
+                      {['Capacity', 'Occupancy'].map((field) => (
+                        <div key={field}>
+                          <div className="font-mono text-xs text-white/30 mb-1">{field.toUpperCase()}</div>
+                          <input type="number"
+                            defaultValue={field === 'Capacity' ? s.capacity : s.occupancy}
+                            onChange={(e) => {
+                              const val = parseInt(e.target.value) || 0;
+                              if (field === 'Capacity') setTempCap((p) => ({ ...p, [s.id]: val }));
+                              else setTempOcc((p) => ({ ...p, [s.id]: val }));
+                            }}
+                            className="w-full px-3 py-2 rounded font-mono text-sm"
+                            style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: 'white', outline: 'none' }} />
+                        </div>
+                      ))}
+                    </div>
+                    <div className="font-mono text-[11px] text-white/30">
+                      * Capacity cannot be lower than occupancy ({s.occupancy || 0})
+                    </div>
+                    {editError[s.id] && (
+                      <div className="font-mono text-xs text-red-400 bg-red-500/10 border border-red-500/25 px-2.5 py-1.5 rounded">
+                        ⚠ {editError[s.id]}
                       </div>
-                    ))}
-                    <button className="col-span-2 py-2 rounded font-condensed font-bold text-sm tracking-widest"
-                      style={{ background: '#10b981', color: '#080b0f' }}
-                      onClick={() => {
-                        const cap = tempCap[s.id] !== undefined ? tempCap[s.id] : s.capacity;
-                        const occ = tempOcc[s.id] !== undefined ? tempOcc[s.id] : s.occupancy;
-                        if (onUpdateShelter) onUpdateShelter(s.id, cap, occ);
-                        setEditing(null);
-                      }}>
-                      SAVE UPDATE
+                    )}
+                    <button
+                      disabled={saving[s.id]}
+                      className="w-full py-2 rounded font-condensed font-bold text-sm tracking-widest cursor-pointer"
+                      style={{ background: saving[s.id] ? '#6b7280' : '#10b981', color: '#080b0f' }}
+                      onClick={() => handleSaveShelter(s)}>
+                      {saving[s.id] ? 'SAVING...' : 'SAVE UPDATE'}
                     </button>
                   </motion.div>
                 )}
@@ -575,7 +627,36 @@ function SheltersTab({
 }
 
 function SuppliesTab({ suppliesData = [], onRefresh }: { suppliesData?: any[]; onRefresh?: () => void } = {}) {
+  const [editing, setEditing] = useState<string | null>(null);
   const [showAdd, setShowAdd] = useState(false);
+  const [tempQty, setTempQty] = useState<Record<string, number>>({});
+  const [editError, setEditError] = useState<Record<string, string | null>>({});
+  const [saving, setSaving] = useState<Record<string, boolean>>({});
+
+  const handleSaveSupply = async (s: any) => {
+    const newQty = tempQty[s.id] !== undefined ? tempQty[s.id] : s.qty;
+    const allocated = s.allocated || 0;
+    if (newQty < allocated) {
+      setEditError((p) => ({
+        ...p,
+        [s.id]: `Cannot reduce quantity below ${allocated} — ${allocated} ${s.unit || 'units'} are already allocated/committed.`,
+      }));
+      return;
+    }
+    setSaving((p) => ({ ...p, [s.id]: true }));
+    setEditError((p) => ({ ...p, [s.id]: null }));
+    try {
+      await resourcesApi.updateSupply(s.id, { qty: newQty });
+      if (onRefresh) onRefresh();
+      setEditing(null);
+    } catch (err: any) {
+      const msg = err?.response?.data?.error || err?.message || 'Failed to update supply quantity.';
+      setEditError((p) => ({ ...p, [s.id]: msg }));
+    } finally {
+      setSaving((p) => ({ ...p, [s.id]: false }));
+    }
+  };
+
   return (
     <div className="h-full flex flex-col gap-3 overflow-hidden">
       <div className="flex items-center justify-between shrink-0">
@@ -592,6 +673,9 @@ function SuppliesTab({ suppliesData = [], onRefresh }: { suppliesData?: any[]; o
           const isShort = s.qty < s.demand;
           const color = isShort ? '#dc2626' : '#10b981';
           const pct = Math.min((s.qty / (s.demand || 1)) * 100, 100);
+          const allocated = s.allocated || 0;
+          const available = s.available !== undefined ? s.available : Math.max(0, s.qty - allocated);
+
           return (
             <motion.div key={s.id} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.07 }}
               className="p-5 rounded-xl"
@@ -622,11 +706,63 @@ function SuppliesTab({ suppliesData = [], onRefresh }: { suppliesData?: any[]; o
               </div>
               <div className="flex items-center justify-between">
                 <div className="font-mono text-xs text-white/25">synced {s.lastSync || 'recently'}</div>
-                <button className="font-condensed font-bold text-xs px-3 py-1.5 rounded transition-all duration-200"
-                  style={{ background: `${color}15`, color, border: `1px solid ${color}33` }}>
-                  ALLOCATE
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      setEditing(editing === s.id ? null : s.id);
+                      setEditError((p) => ({ ...p, [s.id]: null }));
+                    }}
+                    className="font-condensed font-bold text-xs px-3 py-1.5 rounded transition-all duration-200 cursor-pointer"
+                    style={{ background: 'rgba(245,158,11,0.08)', color: '#f59e0b', border: '1px solid rgba(245,158,11,0.2)' }}
+                  >
+                    {editing === s.id ? 'CANCEL' : 'UPDATE QUANTITY'}
+                  </button>
+                  <button className="font-condensed font-bold text-xs px-3 py-1.5 rounded transition-all duration-200"
+                    style={{ background: `${color}15`, color, border: `1px solid ${color}33` }}>
+                    ALLOCATE
+                  </button>
+                </div>
               </div>
+              <AnimatePresence>
+                {editing === s.id && (
+                  <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
+                    className="mt-3 pt-3 border-t border-white/5 space-y-2">
+                    <div className="flex items-center justify-between font-mono text-xs text-white/40">
+                      <span>COMMITTED: <strong className="text-amber-400">{allocated} {s.unit}</strong></span>
+                      <span>AVAILABLE: <strong className="text-emerald-400">{available} {s.unit}</strong></span>
+                    </div>
+                    <div>
+                      <div className="font-mono text-xs text-white/30 mb-1">TOTAL QUANTITY ({s.unit?.toUpperCase() || 'UNITS'})</div>
+                      <input
+                        type="number"
+                        defaultValue={s.qty}
+                        onChange={(e) => {
+                          const val = parseInt(e.target.value, 10) || 0;
+                          setTempQty((p) => ({ ...p, [s.id]: val }));
+                        }}
+                        className="w-full px-3 py-2 rounded font-mono text-sm"
+                        style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: 'white', outline: 'none' }}
+                      />
+                      <div className="font-mono text-[11px] text-white/30 mt-1">
+                        * Cannot be lower than currently allocated ({allocated} {s.unit})
+                      </div>
+                    </div>
+                    {editError[s.id] && (
+                      <div className="font-mono text-xs text-red-400 bg-red-500/10 border border-red-500/25 px-2.5 py-1.5 rounded">
+                        ⚠ {editError[s.id]}
+                      </div>
+                    )}
+                    <button
+                      disabled={saving[s.id]}
+                      onClick={() => handleSaveSupply(s)}
+                      className="w-full py-2 rounded font-condensed font-bold text-sm tracking-widest cursor-pointer"
+                      style={{ background: saving[s.id] ? '#6b7280' : '#10b981', color: '#080b0f' }}
+                    >
+                      {saving[s.id] ? 'SAVING...' : 'SAVE QUANTITY UPDATE'}
+                    </button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </motion.div>
           );
         })}
@@ -718,7 +854,36 @@ function AmbulancesTab({ ambulancesData = [], onRefresh }: { ambulancesData?: an
 }
 
 function EquipmentTab({ equipmentData = [], onRefresh }: { equipmentData?: any[]; onRefresh?: () => void } = {}) {
+  const [editing, setEditing] = useState<string | null>(null);
   const [showAdd, setShowAdd] = useState(false);
+  const [tempQty, setTempQty] = useState<Record<string, number>>({});
+  const [editError, setEditError] = useState<Record<string, string | null>>({});
+  const [saving, setSaving] = useState<Record<string, boolean>>({});
+
+  const handleSaveEquipment = async (e: any) => {
+    const newQty = tempQty[e.id] !== undefined ? tempQty[e.id] : e.qty;
+    const allocated = Math.max(0, e.qty - e.available);
+    if (newQty < allocated) {
+      setEditError((p) => ({
+        ...p,
+        [e.id]: `Cannot reduce quantity below ${allocated} — ${allocated} units are currently allocated/in use.`,
+      }));
+      return;
+    }
+    setSaving((p) => ({ ...p, [e.id]: true }));
+    setEditError((p) => ({ ...p, [e.id]: null }));
+    try {
+      await resourcesApi.updateEquipment(e.id, { qty: newQty });
+      if (onRefresh) onRefresh();
+      setEditing(null);
+    } catch (err: any) {
+      const msg = err?.response?.data?.error || err?.message || 'Failed to update equipment quantity.';
+      setEditError((p) => ({ ...p, [e.id]: msg }));
+    } finally {
+      setSaving((p) => ({ ...p, [e.id]: false }));
+    }
+  };
+
   return (
     <div className="h-full flex flex-col gap-3 overflow-hidden">
       <div className="flex items-center justify-between shrink-0">
@@ -734,6 +899,7 @@ function EquipmentTab({ equipmentData = [], onRefresh }: { equipmentData?: any[]
         {equipmentData.map((e, i) => {
           const color = equipStatusColors[e.status] || '#6b7280';
           const pct = Math.round((e.available / (e.qty || 1)) * 100);
+          const allocated = Math.max(0, e.qty - e.available);
           return (
             <motion.div key={e.id} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.07 }}
               className="p-5 rounded-xl"
@@ -744,10 +910,61 @@ function EquipmentTab({ equipmentData = [], onRefresh }: { equipmentData?: any[]
               </div>
               <div className="font-condensed font-bold text-sm text-white mb-1">{e.name}</div>
               <div className="font-mono text-xs text-white/35 mb-4">{e.location}</div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 mb-3">
                 <Bar value={e.available} max={e.qty || 1} color={color} />
                 <div className="font-mono text-xs text-white/30 shrink-0">{pct}%</div>
               </div>
+              <div className="flex items-center justify-between pt-2 border-t border-white/5">
+                <div className="font-mono text-xs text-white/30">
+                  Allocated: <strong className="text-amber-400">{allocated}</strong>
+                </div>
+                <button
+                  onClick={() => {
+                    setEditing(editing === e.id ? null : e.id);
+                    setEditError((p) => ({ ...p, [e.id]: null }));
+                  }}
+                  className="font-condensed font-bold text-xs px-3 py-1 rounded transition-all duration-200 cursor-pointer"
+                  style={{ background: 'rgba(249,115,22,0.08)', color: '#f97316', border: '1px solid rgba(249,115,22,0.2)' }}
+                >
+                  {editing === e.id ? 'CANCEL' : 'UPDATE QUANTITY'}
+                </button>
+              </div>
+              <AnimatePresence>
+                {editing === e.id && (
+                  <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
+                    className="mt-3 pt-2 border-t border-white/5 space-y-2">
+                    <div>
+                      <div className="font-mono text-xs text-white/30 mb-1">TOTAL QUANTITY</div>
+                      <input
+                        type="number"
+                        defaultValue={e.qty}
+                        onChange={(ev) => {
+                          const val = parseInt(ev.target.value, 10) || 0;
+                          setTempQty((p) => ({ ...p, [e.id]: val }));
+                        }}
+                        className="w-full px-3 py-2 rounded font-mono text-sm"
+                        style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: 'white', outline: 'none' }}
+                      />
+                      <div className="font-mono text-[11px] text-white/30 mt-1">
+                        * Cannot be lower than in-use units ({allocated})
+                      </div>
+                    </div>
+                    {editError[e.id] && (
+                      <div className="font-mono text-xs text-red-400 bg-red-500/10 border border-red-500/25 px-2.5 py-1.5 rounded">
+                        ⚠ {editError[e.id]}
+                      </div>
+                    )}
+                    <button
+                      disabled={saving[e.id]}
+                      onClick={() => handleSaveEquipment(e)}
+                      className="w-full py-2 rounded font-condensed font-bold text-sm tracking-widest cursor-pointer"
+                      style={{ background: saving[e.id] ? '#6b7280' : '#10b981', color: '#080b0f' }}
+                    >
+                      {saving[e.id] ? 'SAVING...' : 'SAVE QUANTITY UPDATE'}
+                    </button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </motion.div>
           );
         })}
@@ -833,6 +1050,7 @@ export default function ResourceManagerHome() {
   const [emergencyStatus, setEmergencyStatus] = useState<any>(null);
   const [showDeclareModal, setShowDeclareModal] = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
+  const [selectedShelterForReport, setSelectedShelterForReport] = useState<any | null>(null);
   const [restoring, setRestoring] = useState(false);
 
   const refreshShelters = () => sheltersApi.getAll().then((r) => r.data && setShelterList(r.data)).catch(() => {});
@@ -875,12 +1093,9 @@ export default function ResourceManagerHome() {
   };
 
   const handleUpdateShelter = async (id: string, cap: number, occ: number) => {
-    try {
-      await sheltersApi.updateStatus(id, { capacity: cap, occupancy: occ });
-      setShelterList((prev) => prev.map((s) => s.id === id ? { ...s, capacity: cap, occupancy: occ } : s));
-    } catch (e) {
-      console.error('Failed to update shelter status:', e);
-    }
+    const res = await sheltersApi.updateStatus(id, { capacity: cap, occupancy: occ });
+    await refreshShelters();
+    return res;
   };
 
   return (
@@ -920,7 +1135,10 @@ export default function ResourceManagerHome() {
         {/* Header Action Buttons */}
         <div className="ml-auto flex items-center gap-3">
           <motion.button
-            onClick={() => setShowReportModal(true)}
+            onClick={() => {
+              setSelectedShelterForReport(null);
+              setShowReportModal(true);
+            }}
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
             className="font-condensed font-bold text-xs px-4 py-1.5 rounded-lg flex items-center gap-2 cursor-pointer"
@@ -979,7 +1197,17 @@ export default function ResourceManagerHome() {
                 restoring={restoring}
               />
             )}
-            {section === 'shelters' && <SheltersTab sheltersData={shelterList} onUpdateShelter={handleUpdateShelter} onRefresh={refreshShelters} />}
+            {section === 'shelters' && (
+              <SheltersTab
+                sheltersData={shelterList}
+                onUpdateShelter={handleUpdateShelter}
+                onRefresh={refreshShelters}
+                onReportIncident={(shelter) => {
+                  setSelectedShelterForReport(shelter);
+                  setShowReportModal(true);
+                }}
+              />
+            )}
             {section === 'supplies' && <SuppliesTab suppliesData={supplyList} onRefresh={refreshSupplies} />}
             {section === 'ambulances' && <AmbulancesTab ambulancesData={ambulanceList} onRefresh={refreshAmbulances} />}
             {section === 'equipment' && <EquipmentTab equipmentData={equipmentList} onRefresh={refreshEquipment} />}
@@ -999,8 +1227,25 @@ export default function ResourceManagerHome() {
 
       <ReportIncidentModal
         isOpen={showReportModal}
-        onClose={() => setShowReportModal(false)}
-        sourceContext="PORTAL_REPORT"
+        onClose={() => {
+          setShowReportModal(false);
+          setSelectedShelterForReport(null);
+        }}
+        onSuccess={() => {
+          refreshShelters();
+        }}
+        sourceContext="RESOURCE_MANAGER"
+        shelterId={selectedShelterForReport?.id || null}
+        shelterName={selectedShelterForReport?.name || null}
+        defaultLocation={selectedShelterForReport?.name || ''}
+        defaultCoords={
+          selectedShelterForReport?.latitude && selectedShelterForReport?.longitude
+            ? {
+                lat: parseFloat(selectedShelterForReport.latitude),
+                lng: parseFloat(selectedShelterForReport.longitude),
+              }
+            : null
+        }
       />
     </div>
   );

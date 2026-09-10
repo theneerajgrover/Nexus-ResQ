@@ -2375,8 +2375,8 @@ function IncidentsTab({
             ? { label: 'CITIZEN SOS', bg: 'rgba(239,68,68,0.15)', text: '#ef4444' }
             : inc.source === 'CITIZEN_REPORT'
             ? { label: 'CITIZEN REPORT', bg: 'rgba(245,158,11,0.15)', text: '#f59e0b' }
-            : inc.source === 'PORTAL_REPORT'
-            ? { label: 'PORTAL REPORT', bg: 'rgba(6,182,212,0.15)', text: '#06b6d4' }
+            : (inc.source === 'RESOURCE_MANAGER' || inc.source === 'PORTAL_REPORT')
+            ? { label: inc.source === 'RESOURCE_MANAGER' ? 'RESOURCE MGR' : 'PORTAL REPORT', bg: 'rgba(16,185,129,0.15)', text: '#10b981' }
             : inc.source === 'AUTHORITY_REPORT'
             ? { label: 'AUTHORITY', bg: 'rgba(168,85,247,0.15)', text: '#a855f7' }
             : null;
@@ -2512,6 +2512,12 @@ function IncidentsTab({
                 {selectedInc.assigned_responder_id && (
                   <div className="font-mono text-xs mt-2" style={{ color: '#10b981' }}>
                     Assigned Field Unit: Unit {selectedInc.assigned_responder_id}
+                  </div>
+                )}
+                {selectedInc.shelter_id && (
+                  <div className="font-mono text-xs mt-2 flex items-center gap-1.5 text-cyan-400">
+                    <span>🏛️ Linked Shelter Facility:</span>
+                    <span className="font-bold text-white">{selectedInc.shelter_id}</span>
                   </div>
                 )}
               </div>
