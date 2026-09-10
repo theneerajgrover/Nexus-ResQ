@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { incidentsApi } from '../../api';
+import { incidentsApi, locationApi } from '../../api';
 import { useAppStore } from '../../store/useAppStore';
 
 const DISASTER_TYPES = [
@@ -27,7 +27,9 @@ interface ReportIncidentModalProps {
   onSuccess?: (data: any) => void;
   defaultLocation?: string;
   defaultCoords?: { lat: number; lng: number } | null;
-  sourceContext?: 'CITIZEN_REPORT' | 'PORTAL_REPORT' | 'AUTHORITY_REPORT';
+  sourceContext?: 'CITIZEN_REPORT' | 'PORTAL_REPORT' | 'AUTHORITY_REPORT' | 'RESOURCE_MANAGER';
+  shelterId?: string | null;
+  shelterName?: string | null;
 }
 
 export default function ReportIncidentModal({
@@ -37,50 +39,114 @@ export default function ReportIncidentModal({
   defaultLocation = '',
   defaultCoords = null,
   sourceContext,
+  shelterId = null,
+  shelterName = null,
 }: ReportIncidentModalProps) {
-  const { userName, role } = useAppStore();
+  const { userName, role, userLocation } = useAppStore();
 
   const [disasterType, setDisasterType] = useState('FLOOD');
   const [severity, setSeverity] = useState('HIGH');
-  const [location, setLocation] = useState(defaultLocation);
+  const [location, setLocation] = useState(defaultLocation || (shelterName ? `${shelterName}` : ''));
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(defaultCoords);
   const [description, setDescription] = useState('');
   const [affectedPeople, setAffectedPeople] = useState(1);
   const [reporterName, setReporterName] = useState(userName || '');
   const [reporterPhone, setReporterPhone] = useState('');
   const [isLocating, setIsLocating] = useState(false);
+  const [locationMessage, setLocationMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [successResult, setSuccessResult] = useState<any | null>(null);
 
+  // Sync default location and coords when modal opens with new props
+  useEffect(() => {
+    if (isOpen) {
+      if (defaultLocation) setLocation(defaultLocation);
+      else if (shelterName) setLocation(shelterName);
+      if (defaultCoords) setCoords(defaultCoords);
+      setSubmitError(null);
+      setLocationMessage(null);
+    }
+  }, [isOpen, defaultLocation, defaultCoords, shelterName]);
+
   const roleSource = sourceContext || (
     role === 'responder' ? 'PORTAL_REPORT' :
-    role === 'resource_manager' ? 'PORTAL_REPORT' :
+    role === 'resource_manager' ? 'RESOURCE_MANAGER' :
     role === 'authority_command' ? 'AUTHORITY_REPORT' :
     'CITIZEN_REPORT'
   );
 
   const handleAcquireLocation = () => {
-    if (!navigator.geolocation) {
-      setSubmitError('Geolocation is not supported by your browser.');
+    if (typeof window === 'undefined' || !navigator.geolocation) {
+      setLocationMessage('Geolocation is not supported by your browser.');
       return;
     }
+
     setIsLocating(true);
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const lat = parseFloat(pos.coords.latitude.toFixed(6));
-        const lng = parseFloat(pos.coords.longitude.toFixed(6));
-        setCoords({ lat, lng });
-        if (!location) {
-          setLocation(`GPS Location (${lat}, ${lng})`);
+    setLocationMessage(null);
+
+    const onPositionSuccess = (pos: GeolocationPosition) => {
+      const lat = parseFloat(pos.coords.latitude.toFixed(6));
+      const lng = parseFloat(pos.coords.longitude.toFixed(6));
+      setCoords({ lat, lng });
+
+      // Always populate location if empty or previous was a GPS placeholder
+      setLocation((prev) => {
+        if (!prev || prev.startsWith('GPS Location') || prev.startsWith('GPS:')) {
+          return `GPS Location (${lat.toFixed(5)}°, ${lng.toFixed(5)}°)`;
         }
-        setIsLocating(false);
-      },
-      (err) => {
-        console.warn('Geolocation warning:', err.message);
-        setIsLocating(false);
-      },
-      { enableHighAccuracy: true, timeout: 8000 }
+        return prev;
+      });
+
+      setLocationMessage(`Location acquired (accuracy: ±${Math.round(pos.coords.accuracy || 10)}m)`);
+      setIsLocating(false);
+
+      // Attempt reverse geocoding for a natural address or landmark name
+      locationApi.reverseGeocode(lat, lng, pos.coords.accuracy)
+        .then((rev: any) => {
+          const addr = rev?.data?.formatted_address || rev?.formatted_address;
+          if (addr && typeof addr === 'string') {
+            setLocation(addr);
+          }
+        })
+        .catch(() => {});
+    };
+
+    const onPositionError = (err: GeolocationPositionError) => {
+      // If high-accuracy timed out, retry with standard network triangulation
+      if (err.code === err.TIMEOUT) {
+        navigator.geolocation.getCurrentPosition(
+          onPositionSuccess,
+          (lowErr) => {
+            let msg = 'Location request timed out. Please enter location manually.';
+            if (lowErr.code === lowErr.PERMISSION_DENIED) {
+              msg = 'Location permission was denied. Please allow location access or enter location manually.';
+            } else if (lowErr.code === lowErr.POSITION_UNAVAILABLE) {
+              msg = 'GPS signal unavailable. Please enter location manually.';
+            }
+            setLocationMessage(msg);
+            setIsLocating(false);
+          },
+          { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 }
+        );
+        return;
+      }
+
+      let msg = 'Unable to determine device location.';
+      if (err.code === err.PERMISSION_DENIED) {
+        msg = 'Location permission was denied. Please allow browser location access or enter location manually.';
+      } else if (err.code === err.POSITION_UNAVAILABLE) {
+        msg = 'GPS position unavailable. Please enter location manually.';
+      }
+      setLocationMessage(msg);
+      setIsLocating(false);
+    };
+
+    // First attempt high accuracy GPS
+    navigator.geolocation.getCurrentPosition(
+      onPositionSuccess,
+      onPositionError,
+      { enableHighAccuracy: true, timeout: 7000, maximumAge: 10000 }
     );
   };
 
@@ -104,9 +170,10 @@ export default function ReportIncidentModal({
         description: description.trim() || `Disaster reported: ${disasterType} at ${location.trim()}`,
         affected_people: affectedPeople,
         source: roleSource,
-        reporter_name: reporterName.trim() || userName || 'Anonymous Reporter',
+        reporter_name: reporterName.trim() || userName || (role === 'resource_manager' ? 'Resource Manager' : 'Anonymous Reporter'),
         reporter_phone: reporterPhone.trim() || undefined,
-      });
+        shelter_id: shelterId || undefined,
+      } as any);
 
       if (res.data?.success || res.success) {
         const payload = res.data?.data || res.data;
@@ -252,6 +319,22 @@ export default function ReportIncidentModal({
                   </div>
                 </div>
 
+                {/* Shelter Association Badge if reporting for a shelter */}
+                {shelterId && (
+                  <div className="p-2.5 rounded-xl bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-between font-mono text-xs text-cyan-300">
+                    <div className="flex items-center gap-2">
+                      <span className="text-base">🏛️</span>
+                      <div>
+                        <div className="font-bold text-white">{shelterName || shelterId}</div>
+                        <div className="text-[10px] text-cyan-400/70">Shelter ID: {shelterId}</div>
+                      </div>
+                    </div>
+                    <span className="px-2 py-0.5 rounded bg-cyan-500/20 text-[10px] font-bold tracking-wider text-cyan-300">
+                      SHELTER LINKED
+                    </span>
+                  </div>
+                )}
+
                 {/* Location & GPS */}
                 <div>
                   <div className="flex items-center justify-between mb-1.5">
@@ -262,21 +345,37 @@ export default function ReportIncidentModal({
                       type="button"
                       onClick={handleAcquireLocation}
                       disabled={isLocating}
-                      className="font-mono text-[11px] px-2 py-0.5 rounded bg-cyan-500/15 border border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/25 transition-colors flex items-center gap-1"
+                      className="font-mono text-[11px] px-2.5 py-1 rounded-lg bg-cyan-500/15 border border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/25 transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
                     >
-                      {isLocating ? 'Acquiring GPS...' : '📍 Use Live GPS'}
+                      {isLocating ? (
+                        <>
+                          <span className="w-2.5 h-2.5 border-2 border-cyan-400/30 border-t-cyan-400 rounded-full animate-spin" />
+                          Acquiring GPS...
+                        </>
+                      ) : (
+                        '📍 Use Live GPS'
+                      )}
                     </button>
                   </div>
                   <input
                     type="text"
                     value={location}
-                    onChange={(e) => setLocation(e.target.value)}
+                    onChange={(e) => {
+                      setLocation(e.target.value);
+                      if (locationMessage) setLocationMessage(null);
+                    }}
                     placeholder="e.g. Yamuna Riverbank Sector 4, Connaught Outer Ring..."
                     className="w-full px-3.5 py-2.5 rounded-xl bg-white/[0.04] border border-white/10 text-white font-mono text-xs focus:outline-none focus:border-cyan-400/50"
                   />
                   {coords && (
-                    <div className="mt-1.5 font-mono text-[10px] text-cyan-400/80">
-                      Coordinates: {coords.lat.toFixed(5)}°, {coords.lng.toFixed(5)}°
+                    <div className="mt-1.5 font-mono text-[11px] text-cyan-400 flex items-center gap-1">
+                      <span>✓ GPS Locked:</span>
+                      <span className="text-white/80">{coords.lat.toFixed(5)}°, {coords.lng.toFixed(5)}°</span>
+                    </div>
+                  )}
+                  {locationMessage && (
+                    <div className="mt-1 font-mono text-[10px] text-amber-400/90">
+                      ℹ {locationMessage}
                     </div>
                   )}
                 </div>

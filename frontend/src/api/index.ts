@@ -155,10 +155,14 @@ export const resourcesApi = {
   createDispatch: (data: any) => apiClient.post('/resources/dispatches', data),
   createSupply: (data: { name: string; category: string; qty: number; demand?: number; unit: string; location: string }) =>
     apiClient.post('/resources/supplies', data),
+  updateSupply: (id: string, data: { qty?: number; demand?: number; location?: string }) =>
+    apiClient.patch(`/resources/supplies/${id}`, data),
   createAmbulance: (data: { callsign: string; crew?: number; status?: string; location: string }) =>
     apiClient.post('/resources/ambulances', data),
   createEquipment: (data: { name: string; qty: number; available?: number; location: string }) =>
     apiClient.post('/resources/equipment', data),
+  updateEquipment: (id: string, data: { qty?: number; location?: string }) =>
+    apiClient.patch(`/resources/equipment/${id}`, data),
   createResponder: (data: { name: string; callsign?: string; status?: string; latitude?: number; longitude?: number }) =>
     apiClient.post('/resources/responders', data),
   getEmergencyStatus: () => apiClient.get('/resources/emergency-status'),
