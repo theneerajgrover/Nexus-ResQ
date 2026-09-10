@@ -55,7 +55,6 @@ Comprehensive situational awareness and AI orchestration hub for incident comman
 - `/command/incidents`: Incident triage table with severity ranking and manual override controls.
 - `/command/intelligence`: Deep analysis of AI response plans, agent recommendations, and decision explanations.
 - `/command/dispatch`: Field dispatch coordinator for deploying response teams and emergency medical units.
-- `/command/evacuation`: Regional evacuation corridor management, traffic congestion, and route closures.
 - `/command/operations`: Comprehensive multi-agency operational audit timeline.
 
 ### 5. Resource Manager Portal (`/resources`)
