@@ -40,11 +40,17 @@ function OverviewTab({
   sheltersData = [],
   ambulancesData = [],
   dispatchesData = [],
+  emergencyStatus,
+  onRestore,
+  restoring,
 }: {
   suppliesData?: any[];
   sheltersData?: any[];
   ambulancesData?: any[];
   dispatchesData?: any[];
+  emergencyStatus?: any;
+  onRestore?: () => void;
+  restoring?: boolean;
 } = {}) {
   const shortages = suppliesData.filter((s) => s.qty < s.demand).length;
   const nearFull = sheltersData.filter((s) => s.status === 'NEAR FULL').length;
@@ -66,55 +72,328 @@ function OverviewTab({
   ];
 
   return (
-    <div className="h-full flex gap-5">
-      {/* KPI grid */}
-      <div className="grid grid-cols-2 grid-rows-2 gap-4 w-96 shrink-0">
-        {kpis.map((k, i) => (
-          <motion.div key={k.label} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.07 }}
-            className="p-4 rounded-xl flex flex-col justify-between"
-            style={{ background: 'rgba(15,19,25,0.8)', border: `1px solid ${k.color}22` }}>
-            <div className="font-mono text-xs text-white/35 mb-1">{k.label}</div>
-            <div className="font-condensed font-black text-4xl" style={{ color: k.color }}>{k.value}</div>
-            <div className="font-mono text-xs text-white/25 mt-1">{k.sub}</div>
-          </motion.div>
-        ))}
-      </div>
-
-      {/* Right panel: warnings + supply bars */}
-      <div className="flex-1 flex flex-col gap-4 overflow-hidden">
-        {/* Urgent warnings */}
-        <div className="p-4 rounded-xl space-y-2 shrink-0" style={{ background: 'rgba(220,38,38,0.05)', border: '1px solid rgba(220,38,38,0.18)' }}>
-          <div className="font-mono text-xs tracking-widest text-red-400 mb-2">CAPACITY WARNINGS</div>
-          {warnings.map((w) => (
-            <div key={w.label} className="flex items-center gap-3">
-              <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: w.color }} />
-              <div className="font-condensed font-bold text-xs text-white flex-1">{w.label}</div>
-              <div className="font-mono text-xs ml-auto shrink-0" style={{ color: w.color }}>{w.warn}</div>
+    <div className="h-full flex flex-col gap-4 overflow-hidden">
+      {/* Active Self-Emergency Alert Banner */}
+      {emergencyStatus?.isAffected && emergencyStatus?.activeEmergency && (
+        <motion.div
+          initial={{ opacity: 0, y: -8 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="p-4 rounded-xl flex items-center justify-between gap-4 shrink-0"
+          style={{
+            background: 'linear-gradient(90deg, rgba(220,38,38,0.15) 0%, rgba(245,158,11,0.08) 100%)',
+            border: '1px solid rgba(220,38,38,0.4)',
+          }}
+        >
+          <div className="flex items-start gap-3">
+            <div className="w-9 h-9 rounded-lg bg-red-500/20 border border-red-500/40 flex items-center justify-center text-red-400 font-bold text-lg shrink-0 mt-0.5">
+              ⚠
             </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-mono text-xs px-2 py-0.5 rounded bg-red-500/20 text-red-400 font-bold tracking-wider">
+                  FACILITY EMERGENCY: {emergencyStatus.activeEmergency.emergency_type} ({emergencyStatus.activeEmergency.severity})
+                </span>
+                <span className="font-mono text-xs text-white/50">
+                  LOCATION: {emergencyStatus.activeEmergency.location}
+                </span>
+              </div>
+              <div className="text-white text-xs mt-1 font-condensed font-medium">
+                {emergencyStatus.activeEmergency.description}
+              </div>
+              <div className="flex items-center gap-4 mt-2 font-mono text-xs text-white/50 flex-wrap">
+                <div>
+                  REQUESTED AID: <span className="text-amber-400 font-bold">{emergencyStatus.activeEmergency.requested_quantity} {emergencyStatus.activeEmergency.requested_resource_type || 'units'}</span>
+                </div>
+                <div>•</div>
+                <div>
+                  LOCAL RESERVES LOCKED: <span className="text-red-400 font-bold">{emergencyStatus.activeEmergency.reserved_local_quantity} units</span>
+                </div>
+                <div>•</div>
+                <div className="text-amber-300/80">
+                  External transfer safeguard active
+                </div>
+              </div>
+            </div>
+          </div>
+          {onRestore && (
+            <motion.button
+              onClick={onRestore}
+              disabled={restoring}
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              className="font-condensed font-bold text-xs px-4 py-2 rounded-lg shrink-0 flex items-center gap-2"
+              style={{ background: 'rgba(16,185,129,0.2)', color: '#10b981', border: '1px solid rgba(16,185,129,0.4)' }}
+            >
+              <span>✓</span>
+              {restoring ? 'RESTORING...' : 'RESTORE STATUS'}
+            </motion.button>
+          )}
+        </motion.div>
+      )}
+
+      {/* Main Grid: KPI + Right panel */}
+      <div className="flex-1 flex gap-5 overflow-hidden">
+        {/* KPI grid */}
+        <div className="grid grid-cols-2 grid-rows-2 gap-4 w-96 shrink-0">
+          {kpis.map((k, i) => (
+            <motion.div key={k.label} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.07 }}
+              className="p-4 rounded-xl flex flex-col justify-between"
+              style={{ background: 'rgba(15,19,25,0.8)', border: `1px solid ${k.color}22` }}>
+              <div className="font-mono text-xs text-white/35 mb-1">{k.label}</div>
+              <div className="font-condensed font-black text-4xl" style={{ color: k.color }}>{k.value}</div>
+              <div className="font-mono text-xs text-white/25 mt-1">{k.sub}</div>
+            </motion.div>
           ))}
         </div>
 
-        {/* Supply bars */}
-        <div className="flex-1 p-4 rounded-xl" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
-          <div className="font-mono text-xs tracking-widest text-white/30 mb-4">SUPPLY vs DEMAND</div>
-          <div className="space-y-4">
-            {suppliesData.map((s) => {
-              const isShort = s.qty < s.demand;
-              const color = isShort ? '#dc2626' : '#10b981';
-              const pct = Math.round(Math.min((s.qty / (s.demand || 1)) * 100, 100));
-              return (
-                <div key={s.id}>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <div className="font-condensed font-semibold text-xs text-white">{s.name}</div>
-                    <div className="font-mono text-xs" style={{ color }}>{pct}% · {s.qty.toLocaleString()} / {s.demand.toLocaleString()} {s.unit}</div>
+        {/* Right panel: warnings + supply bars */}
+        <div className="flex-1 flex flex-col gap-4 overflow-hidden">
+          {/* Urgent warnings */}
+          <div className="p-4 rounded-xl space-y-2 shrink-0" style={{ background: 'rgba(220,38,38,0.05)', border: '1px solid rgba(220,38,38,0.18)' }}>
+            <div className="font-mono text-xs tracking-widest text-red-400 mb-2">CAPACITY WARNINGS</div>
+            {warnings.map((w) => (
+              <div key={w.label} className="flex items-center gap-3">
+                <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: w.color }} />
+                <div className="font-condensed font-bold text-xs text-white flex-1">{w.label}</div>
+                <div className="font-mono text-xs ml-auto shrink-0" style={{ color: w.color }}>{w.warn}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Supply bars */}
+          <div className="flex-1 p-4 rounded-xl" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
+            <div className="font-mono text-xs tracking-widest text-white/30 mb-4">SUPPLY vs DEMAND</div>
+            <div className="space-y-4">
+              {suppliesData.map((s) => {
+                const isShort = s.qty < s.demand;
+                const color = isShort ? '#dc2626' : '#10b981';
+                const pct = Math.round(Math.min((s.qty / (s.demand || 1)) * 100, 100));
+                return (
+                  <div key={s.id}>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <div className="font-condensed font-semibold text-xs text-white">{s.name}</div>
+                      <div className="font-mono text-xs" style={{ color }}>{pct}% · {s.qty.toLocaleString()} / {s.demand.toLocaleString()} {s.unit}</div>
+                    </div>
+                    <Bar value={s.qty} max={s.demand} color={color} />
                   </div>
-                  <Bar value={s.qty} max={s.demand} color={color} />
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+function DeclareEmergencyModal({
+  onClose,
+  onSubmit,
+}: {
+  onClose: () => void;
+  onSubmit: (values: {
+    location: string;
+    emergencyType: string;
+    severity: string;
+    description: string;
+    requestedResourceType: string;
+    requestedQuantity: number;
+    reservedLocalQuantity: number;
+  }) => Promise<void>;
+}) {
+  const [location, setLocation] = useState('Regional Logistics Hub West');
+  const [emergencyType, setEmergencyType] = useState('FLOOD');
+  const [severity, setSeverity] = useState('CRITICAL');
+  const [description, setDescription] = useState('');
+  const [requestedResourceType, setRequestedResourceType] = useState('WATER_PUMPS');
+  const [requestedQuantity, setRequestedQuantity] = useState('10');
+  const [reservedLocalQuantity, setReservedLocalQuantity] = useState('15');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSubmit = async () => {
+    if (!location.trim()) {
+      setError('Location is required.');
+      return;
+    }
+    if (!description.trim() || description.trim().length < 5) {
+      setError('Please provide a description (min 5 characters).');
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await onSubmit({
+        location: location.trim(),
+        emergencyType: emergencyType.trim(),
+        severity,
+        description: description.trim(),
+        requestedResourceType: requestedResourceType.trim(),
+        requestedQuantity: parseInt(requestedQuantity, 10) || 0,
+        reservedLocalQuantity: parseInt(reservedLocalQuantity, 10) || 0,
+      });
+      onClose();
+    } catch (err: any) {
+      setError(err?.response?.data?.error || err?.message || 'Failed to declare emergency.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-6" style={{ background: 'rgba(8,11,15,0.85)', backdropFilter: 'blur(6px)' }}>
+      <motion.div
+        initial={{ opacity: 0, scale: 0.93, y: 16 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.96 }}
+        transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+        className="w-full max-w-lg rounded-2xl overflow-hidden"
+        style={{ background: '#0d1017', border: '1px solid rgba(220,38,38,0.4)', boxShadow: '0 0 60px rgba(220,38,38,0.15)' }}
+      >
+        <div className="flex items-center justify-between px-6 py-4" style={{ background: 'rgba(220,38,38,0.1)', borderBottom: '1px solid rgba(220,38,38,0.25)' }}>
+          <div className="flex items-center gap-2.5">
+            <span className="text-red-400 font-bold text-lg">⚠</span>
+            <div className="font-condensed font-black text-lg text-white">DECLARE FACILITY SELF-EMERGENCY</div>
+          </div>
+          <button onClick={onClose} className="font-mono text-xs text-white/30 hover:text-white/60">✕</button>
+        </div>
+
+        <div className="p-6 space-y-4 max-h-[75vh] overflow-y-auto">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <div className="font-mono text-xs tracking-widest text-white/40 mb-1.5">FACILITY LOCATION</div>
+              <input
+                type="text"
+                value={location}
+                onChange={(e) => setLocation(e.target.value)}
+                placeholder="e.g. Regional Logistics Hub West"
+                className="w-full px-4 py-2 rounded-lg font-mono text-xs"
+                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', color: 'white', outline: 'none' }}
+              />
+            </div>
+
+            <div>
+              <div className="font-mono text-xs tracking-widest text-white/40 mb-1.5">EMERGENCY TYPE</div>
+              <select
+                value={emergencyType}
+                onChange={(e) => setEmergencyType(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg font-mono text-xs"
+                style={{ background: '#131822', border: '1px solid rgba(255,255,255,0.1)', color: 'white', outline: 'none' }}
+              >
+                <option value="FLOOD">FLOOD</option>
+                <option value="FIRE">FIRE</option>
+                <option value="EARTHQUAKE">EARTHQUAKE</option>
+                <option value="STRUCTURAL DAMAGE">STRUCTURAL DAMAGE</option>
+                <option value="MEDICAL EMERGENCY">MEDICAL EMERGENCY</option>
+                <option value="POWER FAILURE">POWER FAILURE</option>
+                <option value="SECURITY HAZARD">SECURITY HAZARD</option>
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <div className="font-mono text-xs tracking-widest text-white/40 mb-1.5">SEVERITY LEVEL</div>
+            <div className="flex gap-3">
+              {['CRITICAL', 'HIGH', 'MODERATE'].map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => setSeverity(s)}
+                  className={`flex-1 py-1.5 rounded-lg font-mono text-xs font-bold transition-colors ${
+                    severity === s
+                      ? s === 'CRITICAL' ? 'bg-red-500/20 text-red-400 border border-red-500/50'
+                      : s === 'HIGH' ? 'bg-amber-500/20 text-amber-400 border border-amber-500/50'
+                      : 'bg-yellow-500/20 text-yellow-300 border border-yellow-500/50'
+                      : 'bg-white/[0.04] text-white/40 border border-white/10'
+                  }`}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <div className="font-mono text-xs tracking-widest text-white/40 mb-1.5">EMERGENCY DESCRIPTION</div>
+            <textarea
+              rows={3}
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Describe the nature of the emergency, current impact on facility operations, and immediate hazards..."
+              className="w-full px-4 py-2 rounded-lg font-mono text-xs"
+              style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', color: 'white', outline: 'none' }}
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <div className="font-mono text-xs tracking-widest text-white/40 mb-1.5">REQUESTED RESOURCE</div>
+              <input
+                type="text"
+                value={requestedResourceType}
+                onChange={(e) => setRequestedResourceType(e.target.value)}
+                placeholder="e.g. WATER_PUMPS, MEDICINE"
+                className="w-full px-4 py-2 rounded-lg font-mono text-xs"
+                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', color: 'white', outline: 'none' }}
+              />
+            </div>
+
+            <div>
+              <div className="font-mono text-xs tracking-widest text-white/40 mb-1.5">REQUESTED QUANTITY</div>
+              <input
+                type="number"
+                value={requestedQuantity}
+                onChange={(e) => setRequestedQuantity(e.target.value)}
+                placeholder="e.g. 10"
+                className="w-full px-4 py-2 rounded-lg font-mono text-xs"
+                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', color: 'white', outline: 'none' }}
+              />
+            </div>
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <div className="font-mono text-xs tracking-widest text-red-400 font-semibold">RESERVED LOCAL QUANTITY (LOCK)</div>
+              <div className="font-mono text-[11px] text-white/30">Safeguards local inventory</div>
+            </div>
+            <input
+              type="number"
+              value={reservedLocalQuantity}
+              onChange={(e) => setReservedLocalQuantity(e.target.value)}
+              placeholder="e.g. 15"
+              className="w-full px-4 py-2 rounded-lg font-mono text-xs"
+              style={{ background: 'rgba(220,38,38,0.06)', border: '1px solid rgba(220,38,38,0.3)', color: '#fca5a5', outline: 'none' }}
+            />
+            <div className="font-mono text-[11px] text-white/35 mt-1">
+              * Units reserved for on-site operations. External dispatch transfers exceeding remaining stock will be blocked.
+            </div>
+          </div>
+
+          {error && (
+            <div className="font-mono text-xs text-red-400 pt-1">{error}</div>
+          )}
+
+          <div className="flex gap-3 pt-2">
+            <motion.button
+              className="flex-1 py-3 rounded-xl font-condensed font-black text-sm tracking-widest"
+              style={{ background: saving ? '#6b7280' : '#dc2626', color: 'white' }}
+              whileHover={saving ? {} : { scale: 1.02 }}
+              whileTap={saving ? {} : { scale: 0.97 }}
+              onClick={handleSubmit}
+              disabled={saving}
+            >
+              {saving ? 'TRANSMITTING ALERT...' : 'BROADCAST EMERGENCY & REQUEST AID'}
+            </motion.button>
+            <button
+              onClick={onClose}
+              className="px-5 py-3 rounded-xl font-condensed font-bold text-sm"
+              style={{ background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.4)' }}
+            >
+              CANCEL
+            </button>
+          </div>
+        </div>
+      </motion.div>
     </div>
   );
 }
@@ -550,12 +829,20 @@ export default function ResourceManagerHome() {
   const [ambulanceList, setAmbulanceList] = useState<any[]>([]);
   const [equipmentList, setEquipmentList] = useState<any[]>([]);
   const [dispatchList, setDispatchList] = useState<any[]>([]);
+  const [emergencyStatus, setEmergencyStatus] = useState<any>(null);
+  const [showDeclareModal, setShowDeclareModal] = useState(false);
+  const [restoring, setRestoring] = useState(false);
 
   const refreshShelters = () => sheltersApi.getAll().then((r) => r.data && setShelterList(r.data)).catch(() => {});
   const refreshSupplies = () => resourcesApi.getSupplies().then((r) => r.data && setSupplyList(r.data)).catch(() => {});
   const refreshAmbulances = () => resourcesApi.getAmbulances().then((r) => r.data && setAmbulanceList(r.data)).catch(() => {});
   const refreshEquipment = () => resourcesApi.getEquipment().then((r) => r.data && setEquipmentList(r.data)).catch(() => {});
   const refreshDispatches = () => resourcesApi.getDispatches().then((r) => r.data && setDispatchList(r.data)).catch(() => {});
+  const refreshEmergencyStatus = () =>
+    resourcesApi
+      .getEmergencyStatus()
+      .then((r) => r.data && setEmergencyStatus(r.data))
+      .catch(() => {});
 
   useEffect(() => {
     refreshShelters();
@@ -563,7 +850,27 @@ export default function ResourceManagerHome() {
     refreshAmbulances();
     refreshEquipment();
     refreshDispatches();
+    refreshEmergencyStatus();
   }, []);
+
+  const handleDeclareEmergency = async (values: any) => {
+    await resourcesApi.declareEmergency(values);
+    await refreshEmergencyStatus();
+    await refreshDispatches();
+  };
+
+  const handleRestoreStatus = async () => {
+    setRestoring(true);
+    try {
+      await resourcesApi.restoreOperationalStatus();
+      await refreshEmergencyStatus();
+      await refreshDispatches();
+    } catch (err) {
+      console.error('Failed to restore operational status:', err);
+    } finally {
+      setRestoring(false);
+    }
+  };
 
   const handleUpdateShelter = async (id: string, cap: number, occ: number) => {
     try {
@@ -594,6 +901,47 @@ export default function ResourceManagerHome() {
         <div className="font-mono text-xs text-white/25 shrink-0">
           RESOURCE MGR · <span className="text-white/45">LIVE</span>
         </div>
+
+        {/* Operational Status Badge */}
+        {emergencyStatus?.isAffected ? (
+          <div className="flex items-center gap-2 px-3 py-1 rounded-full border border-red-500/40 bg-red-500/10 text-red-400 font-mono text-xs font-bold animate-pulse">
+            <span className="w-2 h-2 rounded-full bg-red-500"></span>
+            EMERGENCY — RESOURCE REQUEST REQUIRED
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 px-3 py-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 text-emerald-400 font-mono text-xs font-semibold">
+            <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
+            OPERATIONAL
+          </div>
+        )}
+
+        {/* Header Action Buttons */}
+        <div className="ml-auto flex items-center gap-3">
+          {emergencyStatus?.isAffected ? (
+            <motion.button
+              onClick={handleRestoreStatus}
+              disabled={restoring}
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              className="font-condensed font-bold text-xs px-4 py-1.5 rounded-lg flex items-center gap-2"
+              style={{ background: 'rgba(16,185,129,0.15)', color: '#10b981', border: '1px solid rgba(16,185,129,0.35)' }}
+            >
+              <span>✓</span>
+              {restoring ? 'RESTORING...' : 'RESTORE OPERATIONAL STATUS'}
+            </motion.button>
+          ) : (
+            <motion.button
+              onClick={() => setShowDeclareModal(true)}
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              className="font-condensed font-bold text-xs px-4 py-1.5 rounded-lg flex items-center gap-2"
+              style={{ background: 'rgba(220,38,38,0.15)', color: '#ef4444', border: '1px solid rgba(220,38,38,0.4)' }}
+            >
+              <span>⚠</span>
+              DECLARE LOCATION EMERGENCY
+            </motion.button>
+          )}
+        </div>
       </motion.div>
 
       {/* Content area — fills remaining height */}
@@ -607,7 +955,17 @@ export default function ResourceManagerHome() {
             transition={{ duration: 0.25 }}
             className="h-full"
           >
-            {section === 'overview' && <OverviewTab suppliesData={supplyList} sheltersData={shelterList} ambulancesData={ambulanceList} dispatchesData={dispatchList} />}
+            {section === 'overview' && (
+              <OverviewTab
+                suppliesData={supplyList}
+                sheltersData={shelterList}
+                ambulancesData={ambulanceList}
+                dispatchesData={dispatchList}
+                emergencyStatus={emergencyStatus}
+                onRestore={handleRestoreStatus}
+                restoring={restoring}
+              />
+            )}
             {section === 'shelters' && <SheltersTab sheltersData={shelterList} onUpdateShelter={handleUpdateShelter} onRefresh={refreshShelters} />}
             {section === 'supplies' && <SuppliesTab suppliesData={supplyList} onRefresh={refreshSupplies} />}
             {section === 'ambulances' && <AmbulancesTab ambulancesData={ambulanceList} onRefresh={refreshAmbulances} />}
@@ -616,6 +974,15 @@ export default function ResourceManagerHome() {
           </motion.div>
         </AnimatePresence>
       </div>
+
+      <AnimatePresence>
+        {showDeclareModal && (
+          <DeclareEmergencyModal
+            onClose={() => setShowDeclareModal(false)}
+            onSubmit={handleDeclareEmergency}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }

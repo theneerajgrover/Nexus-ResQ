@@ -146,6 +146,19 @@ export const resourcesApi = {
     apiClient.post('/resources/equipment', data),
   createResponder: (data: { name: string; callsign?: string; status?: string; latitude?: number; longitude?: number }) =>
     apiClient.post('/resources/responders', data),
+  getEmergencyStatus: () => apiClient.get('/resources/emergency-status'),
+  declareEmergency: (data: {
+    location: string;
+    emergencyType: string;
+    severity: string;
+    description: string;
+    requestedResourceType?: string;
+    requestedQuantity?: number;
+    reservedLocalQuantity?: number;
+    managerId?: string;
+  }) => apiClient.post('/resources/declare-emergency', data),
+  restoreOperationalStatus: (data?: { emergencyId?: string; location?: string; restoredBy?: string; notes?: string }) =>
+    apiClient.post('/resources/restore-status', data || {}),
 };
 
 // ── Command Center Service ───────────────────────────────────
