@@ -5,6 +5,8 @@ import { commandApi, respondersApi, predictiveApi, orchestratorApi, incidentsApi
 import OperationalMap, { MapMarker } from '../../components/map/OperationalMap';
 import ReportIncidentModal from '../../components/incident/ReportIncidentModal';
 
+const EMERGENCY_ALERT_SOUND_PATH = '/emergency-alert.mp3';
+
 // Authority / Command merges: Dispatcher (ResQ Sphere, incident assignment, dispatch)
 // + Authority (regional intelligence, AI analysis, evacuation approval)
 
@@ -2899,6 +2901,16 @@ function DispatchTab({ incidentsList, respondersList, dispatchesList }: { incide
   );
 }
 
+// Helper to safely initialize played emergency sound IDs from sessionStorage
+function getInitialPlayedEmergencyIds(): Set<string> {
+  try {
+    const saved = sessionStorage.getItem('nexus_played_emergency_audio_ids');
+    return saved ? new Set<string>(JSON.parse(saved)) : new Set<string>();
+  } catch {
+    return new Set<string>();
+  }
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 export default function CommandHome() {
   const location = useLocation();
@@ -2935,6 +2947,73 @@ export default function CommandHome() {
   const [centerViewMode, setCenterViewMode] = useState<'sphere' | 'map'>('sphere');
   const [isOrchestrating, setIsOrchestrating] = useState(false);
   const isFetchingRef = useRef(false);
+
+  // ── Emergency attention sound ───────────────────────────────────────────────
+  // Tracks which emergency/approval IDs have already triggered the attention sound
+  // so the same emergency never replays on polling cycles, re-renders, or SSE re-fires.
+  // Persisted in sessionStorage to prevent repeated audio on page refreshes during the session.
+  const playedSoundIdsRef = useRef<Set<string>>(getInitialPlayedEmergencyIds());
+  const emergencyAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Initialize the Audio element once on mount
+  useEffect(() => {
+    try {
+      const audio = new Audio(EMERGENCY_ALERT_SOUND_PATH);
+      audio.volume = 0.75;
+      audio.preload = 'none';
+      emergencyAudioRef.current = audio;
+    } catch {
+      // Audio construction failed (e.g. unsupported env) — non-fatal
+    }
+  }, []);
+
+  // Safe playback helper with browser autoplay fallback and session tracking
+  const playEmergencyAttentionSound = useCallback((eventId: string) => {
+    if (!eventId) return;
+    if (playedSoundIdsRef.current.has(eventId)) return;
+    playedSoundIdsRef.current.add(eventId);
+
+    try {
+      sessionStorage.setItem(
+        'nexus_played_emergency_audio_ids',
+        JSON.stringify(Array.from(playedSoundIdsRef.current))
+      );
+    } catch {
+      // sessionStorage write error — non-fatal
+    }
+
+    const audio = emergencyAudioRef.current;
+    if (audio) {
+      audio.currentTime = 0;
+      audio.play().catch(() => {
+        // Browser blocked autoplay before user interaction — silent fallback.
+        // The emergency popup still renders and functions normally.
+      });
+    }
+  }, []);
+
+  // Play attention sound when a genuinely NEW pending approval or recommendation popup appears
+  useEffect(() => {
+    if (activeApproval && (!activeApproval.status || activeApproval.status === 'PENDING')) {
+      const canonicalId =
+        activeApproval.plan_id ||
+        activeApproval.approval_id ||
+        activeApproval.id ||
+        '';
+      if (canonicalId) {
+        playEmergencyAttentionSound(canonicalId);
+      }
+    }
+    if (activePendingApproval && (!activePendingApproval.status || activePendingApproval.status === 'PENDING')) {
+      const canonicalId =
+        activePendingApproval.id ||
+        activePendingApproval.recommendation_id ||
+        '';
+      if (canonicalId) {
+        playEmergencyAttentionSound(canonicalId);
+      }
+    }
+  }, [activeApproval, activePendingApproval, playEmergencyAttentionSound]);
 
   // Controlled 5-Second Real-Time Synchronization Cycle
   const fetchPredictiveData = useCallback(async () => {

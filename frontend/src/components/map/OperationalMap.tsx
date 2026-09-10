@@ -22,6 +22,10 @@ export interface OperationalMapProps {
   activeRouteCoordinates?: [number, number][];
   activeRoutePolyline?: string;
   routeSafetyStatus?: 'SAFE' | 'CAUTION' | 'HIGH_RISK' | 'BLOCKED';
+  alternativeRouteCoordinates?: [number, number][];
+  alternativeRoutePolyline?: string;
+  alternativeRouteSafetyStatus?: 'SAFE' | 'CAUTION' | 'HIGH_RISK' | 'BLOCKED';
+  onSelectAlternativeRoute?: () => void;
   onMarkerClick?: (marker: MapMarker) => void;
   className?: string;
   onRecenter?: () => void;
@@ -118,7 +122,7 @@ function loadGoogleMapsScript(apiKey: string): Promise<void> {
     }
 
     const script = document.createElement('script');
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=places,geometry,routes&v=weekly`;
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=places,geometry,routes,marker&v=weekly&loading=async`;
     script.async = true;
     script.defer = true;
     script.onload = () => resolve();
@@ -137,6 +141,10 @@ export default function OperationalMap({
   activeRouteCoordinates,
   activeRoutePolyline,
   routeSafetyStatus = 'SAFE',
+  alternativeRouteCoordinates,
+  alternativeRoutePolyline,
+  alternativeRouteSafetyStatus = 'SAFE',
+  onSelectAlternativeRoute,
   onMarkerClick,
   className = 'w-full h-full',
   onRecenter,
@@ -147,6 +155,7 @@ export default function OperationalMap({
   const markersRef = useRef<any[]>([]);
   const directionsRendererRef = useRef<any>(null);
   const customPolylineRef = useRef<any>(null);
+  const altPolylineRef = useRef<any>(null);
   const deviceMarkerRef = useRef<any>(null);
 
   const [mapMode, setMapMode] = useState<MapMode>('DARK');
@@ -469,8 +478,9 @@ export default function OperationalMap({
         path,
         geodesic: true,
         strokeColor,
-        strokeOpacity: 0.9,
-        strokeWeight: 4.5,
+        strokeOpacity: 0.95,
+        strokeWeight: 5.0,
+        zIndex: 10,
         map,
       });
     }
@@ -482,6 +492,78 @@ export default function OperationalMap({
       }
     };
   }, [activeRouteCoordinates, activeRoutePolyline, routeSafetyStatus, mapLoaded]);
+
+  // Render tactical alternative route polyline
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map || !window.google?.maps) return;
+
+    if (altPolylineRef.current) {
+      altPolylineRef.current.setMap(null);
+      altPolylineRef.current = null;
+    }
+
+    let coords = alternativeRouteCoordinates;
+    if ((!coords || coords.length === 0) && alternativeRoutePolyline) {
+      try {
+        if (window.google.maps.geometry?.encoding) {
+          const decoded = window.google.maps.geometry.encoding.decodePath(alternativeRoutePolyline);
+          coords = decoded.map((p: any) => [p.lat(), p.lng()]);
+        }
+      } catch {
+        // polyline decode fallback
+      }
+    }
+
+    if (coords && coords.length > 0) {
+      const path = coords.map(([lat, lng]) => ({ lat, lng }));
+      const strokeColor =
+        alternativeRouteSafetyStatus === 'BLOCKED' || alternativeRouteSafetyStatus === 'HIGH_RISK'
+          ? '#dc2626'
+          : '#f59e0b'; // Amber tactical corridor for alternative route B
+
+      altPolylineRef.current = new window.google.maps.Polyline({
+        path,
+        geodesic: true,
+        strokeColor,
+        strokeOpacity: 0.65,
+        strokeWeight: 3.5,
+        zIndex: 5,
+        map,
+      });
+
+      if (onSelectAlternativeRoute) {
+        altPolylineRef.current.addListener('click', () => {
+          onSelectAlternativeRoute();
+        });
+      }
+    }
+
+    return () => {
+      if (altPolylineRef.current) {
+        altPolylineRef.current.setMap(null);
+        altPolylineRef.current = null;
+      }
+    };
+  }, [alternativeRouteCoordinates, alternativeRoutePolyline, alternativeRouteSafetyStatus, onSelectAlternativeRoute, mapLoaded]);
+
+  // Auto-fit bounds to display full route corridors and endpoints
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map || !window.google?.maps) return;
+
+    const coords = activeRouteCoordinates || [];
+    const altCoords = alternativeRouteCoordinates || [];
+    if (coords.length === 0 && altCoords.length === 0) return;
+
+    const bounds = new window.google.maps.LatLngBounds();
+    coords.forEach(([lat, lng]) => bounds.extend({ lat, lng }));
+    altCoords.forEach(([lat, lng]) => bounds.extend({ lat, lng }));
+
+    if (!bounds.isEmpty()) {
+      map.fitBounds(bounds, { top: 70, right: 70, bottom: 70, left: 70 });
+    }
+  }, [activeRouteCoordinates, alternativeRouteCoordinates, mapLoaded]);
 
   return (
     <div className={`relative ${className} bg-[#080b0f] overflow-hidden select-none`}>

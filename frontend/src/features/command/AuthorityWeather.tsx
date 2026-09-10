@@ -1,16 +1,22 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
-import { weatherApi, incidentsApi } from '../../api';
+import { weatherApi, incidentsApi, locationApi } from '../../api';
 import OperationalMap, { MapMarker } from '../../components/map/OperationalMap';
 
 interface SearchResult {
-  id: number;
+  id: string | number;
   name: string;
+  fullName?: string;
   latitude: number;
   longitude: number;
   country?: string;
   admin1?: string;
   region?: string;
+  district?: string;
+  state?: string;
+  city?: string;
+  village?: string;
+  locality?: string;
   timezone?: string;
 }
 
@@ -40,11 +46,13 @@ interface WeatherReport {
 export default function AuthorityWeather() {
   const [query, setQuery] = useState('');
   const [searching, setSearching] = useState(false);
+  const [locatingGps, setLocatingGps] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [selectedLocation, setSelectedLocation] = useState<{ name: string; lat: number; lng: number }>({
-    name: 'New York, United States',
-    lat: 40.7128,
-    lng: -74.006,
+    name: 'Command HQ, New Delhi',
+    lat: 28.6139,
+    lng: 77.2090,
   });
   const [weather, setWeather] = useState<WeatherReport | null>(null);
   const [loadingWeather, setLoadingWeather] = useState(true);
@@ -93,31 +101,116 @@ export default function AuthorityWeather() {
     return () => clearInterval(timer);
   }, [lastSync]);
 
-  const handleSearch = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!query.trim()) return;
-    setSearching(true);
+  // Handle GPS location found from device (via map recenter button or direct GPS click)
+  const handleLocationFound = useCallback(async (coords: { lat: number; lng: number }) => {
+    const { lat, lng } = coords;
     try {
-      const res = await weatherApi.searchLocations(query.trim());
-      const list = Array.isArray(res.data) ? res.data : (res.data?.results || []);
-      setSearchResults(list);
-    } catch (err) {
+      const geoRes = await locationApi.reverseGeocode(lat, lng);
+      const gData = geoRes?.data || geoRes;
+      const address = gData?.formattedAddress || gData?.formatted_address || gData?.display_name || `GPS [${lat.toFixed(4)}°, ${lng.toFixed(4)}°]`;
+      setSelectedLocation({
+        name: address,
+        lat,
+        lng,
+      });
+      setSearchError(null);
+    } catch {
+      setSelectedLocation({
+        name: `GPS Sector [${lat.toFixed(4)}°, ${lng.toFixed(4)}°]`,
+        lat,
+        lng,
+      });
+    }
+  }, []);
+
+  // Dedicated GPS button trigger
+  const triggerDeviceGps = useCallback(() => {
+    if (typeof window === 'undefined' || !navigator.geolocation) {
+      setSearchError('Browser geolocation is not supported.');
+      return;
+    }
+    setLocatingGps(true);
+    setSearchError(null);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setLocatingGps(false);
+        handleLocationFound({
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+        });
+      },
+      (err) => {
+        setLocatingGps(false);
+        if (err.code === err.PERMISSION_DENIED) {
+          setSearchError('Location permission was denied. You can search manually.');
+        } else {
+          setSearchError('Unable to acquire device GPS position. Try searching manually.');
+        }
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  }, [handleLocationFound]);
+
+  const handleSearch = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const cleanQuery = query.trim();
+    if (!cleanQuery) {
+      setSearchError('Please enter a city, village or place.');
+      return;
+    }
+    setSearching(true);
+    setSearchError(null);
+    try {
+      const res: any = await weatherApi.searchLocations(cleanQuery);
+      const data = res?.data || res;
+      const resolvedLoc = data?.location;
+      const list: SearchResult[] = Array.isArray(data?.results)
+        ? data.results
+        : Array.isArray(data?.data)
+        ? data.data
+        : Array.isArray(data)
+        ? data
+        : [];
+
+      if (resolvedLoc && typeof resolvedLoc.latitude === 'number' && typeof resolvedLoc.longitude === 'number') {
+        setSelectedLocation({
+          name: resolvedLoc.name || cleanQuery,
+          lat: resolvedLoc.latitude,
+          lng: resolvedLoc.longitude,
+        });
+        if (list.length > 1) {
+          setSearchResults(list);
+        } else {
+          setSearchResults([]);
+        }
+      } else if (list.length > 0) {
+        selectSearchResult(list[0]);
+        if (list.length > 1) {
+          setSearchResults(list);
+        }
+      } else {
+        setSearchResults([]);
+        setSearchError('Location not found. Try a city, village, town or locality name.');
+      }
+    } catch (err: any) {
       console.error('Location search error:', err);
       setSearchResults([]);
+      const msg = err.response?.data?.error || 'Unable to search this location. Please try again.';
+      setSearchError(msg);
     } finally {
       setSearching(false);
     }
   };
 
-  const selectSearchResult = (item: any) => {
-    const regionName = item.region || item.admin1;
-    const label = `${item.name}${regionName ? `, ${regionName}` : ''}${item.country ? `, ${item.country}` : ''}`;
+  const selectSearchResult = (item: SearchResult) => {
+    const label = item.fullName || item.name || `${item.latitude.toFixed(4)}, ${item.longitude.toFixed(4)}`;
     setSelectedLocation({
       name: label,
-      lat: item.latitude,
-      lng: item.longitude,
+      lat: Number(item.latitude),
+      lng: Number(item.longitude),
     });
     setSearchResults([]);
+    setSearchError(null);
     setQuery('');
   };
 
@@ -192,44 +285,82 @@ export default function AuthorityWeather() {
 
       {/* Global Sector Search */}
       <div className="glass-strong p-4 rounded-xl border border-white/10 relative">
-        <form onSubmit={handleSearch} className="flex gap-2">
+        <form onSubmit={handleSearch} className="flex flex-col sm:flex-row gap-2">
           <div className="relative flex-1">
             <input
               type="text"
-              placeholder="Search worldwide country, state, city, district, or coordinates (e.g., Tokyo, London, Miami, Mumbai)..."
+              placeholder="Search village, city, town, district, or place (e.g., Ludhiana, Mohali, Kotkapura)..."
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                if (searchError) setSearchError(null);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  handleSearch();
+                }
+              }}
               className="w-full px-4 py-2.5 rounded-lg font-mono text-xs text-white bg-white/5 border border-white/10 focus:border-cyan-500/50 outline-none transition-all placeholder:text-white/30"
             />
           </div>
-          <button
-            type="submit"
-            disabled={searching || !query.trim()}
-            className="px-6 py-2.5 rounded-lg font-condensed font-bold text-xs tracking-widest bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-400 border border-cyan-500/40 transition-all disabled:opacity-50"
-          >
-            {searching ? 'QUERYING...' : 'SEARCH SECTOR'}
-          </button>
+          <div className="flex gap-2">
+            <button
+              type="submit"
+              disabled={searching}
+              className="px-6 py-2.5 rounded-lg font-condensed font-bold text-xs tracking-widest bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-400 border border-cyan-500/40 transition-all disabled:opacity-50 cursor-pointer flex items-center justify-center gap-2 min-w-[110px]"
+            >
+              {searching && <span className="animate-spin inline-block">⟳</span>}
+              {searching ? 'SEARCHING...' : 'SEARCH'}
+            </button>
+            <button
+              type="button"
+              onClick={triggerDeviceGps}
+              disabled={locatingGps}
+              title="Use current device GPS location"
+              className="px-4 py-2.5 rounded-lg font-condensed font-bold text-xs tracking-widest bg-white/5 hover:bg-white/10 text-white/80 hover:text-white border border-white/10 transition-all disabled:opacity-50 cursor-pointer flex items-center justify-center gap-1.5"
+            >
+              <span className={locatingGps ? 'animate-spin inline-block' : ''}>🎯</span>
+              <span>{locatingGps ? 'LOCATING...' : 'GPS'}</span>
+            </button>
+          </div>
         </form>
+
+        {/* Validation / Search Error Feedback */}
+        {searchError && (
+          <div className="mt-2.5 px-3 py-1.5 rounded-lg bg-amber-950/40 border border-amber-500/30 text-xs font-mono text-amber-300 flex items-center gap-2">
+            <span>⚠</span>
+            <span>{searchError}</span>
+          </div>
+        )}
 
         {/* Search Results Dropdown */}
         {searchResults.length > 0 && (
           <div className="absolute left-4 right-4 top-full mt-2 z-30 glass-strong border border-cyan-500/30 rounded-xl overflow-hidden shadow-2xl max-h-60 overflow-y-auto">
-            {searchResults.map((item) => (
-              <button
-                key={item.id}
-                onClick={() => selectSearchResult(item)}
-                className="w-full px-4 py-3 text-left font-mono text-xs hover:bg-white/10 border-b border-white/5 flex items-center justify-between text-white transition-colors"
-              >
-                <div>
-                  <span className="font-bold text-cyan-400">{item.name}</span>
-                  {(item.region || item.admin1) && <span className="text-white/60">, {item.region || item.admin1}</span>}
-                  {item.country && <span className="text-white/40"> ({item.country})</span>}
-                </div>
-                <span className="text-[10px] text-white/30 font-mono">
-                  {item.latitude.toFixed(2)}°, {item.longitude.toFixed(2)}°
-                </span>
-              </button>
-            ))}
+            <div className="px-4 py-2 text-[10px] font-mono text-cyan-400/80 border-b border-white/5 bg-white/[0.03] flex items-center justify-between">
+              <span>SELECT A MATCHING SECTOR:</span>
+              <span className="text-white/40">{searchResults.length} location(s)</span>
+            </div>
+            {searchResults.map((item) => {
+              const regionName = item.region || item.admin1 || item.district || item.state;
+              const displayTitle = item.name || item.fullName?.split(',')[0];
+              const displaySub = item.fullName || [displayTitle, regionName, item.country].filter(Boolean).join(', ');
+              return (
+                <button
+                  key={String(item.id)}
+                  onClick={() => selectSearchResult(item)}
+                  className="w-full px-4 py-3 text-left font-mono text-xs hover:bg-white/10 border-b border-white/5 flex items-center justify-between text-white transition-colors cursor-pointer"
+                >
+                  <div className="pr-4">
+                    <span className="font-bold text-cyan-400">{displayTitle}</span>
+                    <div className="text-[11px] text-white/60 truncate max-w-lg">{displaySub}</div>
+                  </div>
+                  <span className="text-[10px] text-white/40 font-mono whitespace-nowrap">
+                    {Number(item.latitude).toFixed(3)}°, {Number(item.longitude).toFixed(3)}°
+                  </span>
+                </button>
+              );
+            })}
           </div>
         )}
       </div>
@@ -254,6 +385,7 @@ export default function AuthorityWeather() {
             zoom={11}
             markers={mapMarkers}
             onMarkerClick={handleMarkerClick}
+            onLocationFound={handleLocationFound}
             className="w-full h-full"
           />
         </div>
