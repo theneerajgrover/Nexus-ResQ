@@ -135,3 +135,75 @@ resourcesRouter.post('/dispatches', async (req: Request, res: Response): Promise
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
+// POST /api/resources/supplies
+resourcesRouter.post('/supplies', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { name, category, qty, demand, unit, location } = req.body;
+    if (!name || !category || !unit || !location) {
+      res.status(400).json({ success: false, error: 'name, category, unit, and location are required.' });
+      return;
+    }
+    const id = `SUP-${category?.substring(0, 3).toUpperCase() || 'GEN'}-${Math.floor(10 + Math.random() * 90)}`;
+
+    const insertRes = await query(
+      `INSERT INTO supplies (id, name, category, qty, demand, unit, location, last_sync)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, to_char(CURRENT_TIMESTAMP, 'HH24:MI'))
+       RETURNING id, name, category, qty, demand, unit, location, last_sync as "lastSync"`,
+      [id, name, category.toUpperCase(), qty || 0, demand || 0, unit, location]
+    );
+
+    res.status(201).json({ success: true, data: insertRes.rows[0] });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/resources/ambulances
+resourcesRouter.post('/ambulances', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { callsign, crew, status, location } = req.body;
+    if (!callsign || !location) {
+      res.status(400).json({ success: false, error: 'callsign and location are required.' });
+      return;
+    }
+    const id = `AMB-${Math.floor(10 + Math.random() * 90)}`;
+
+    const insertRes = await query(
+      `INSERT INTO ambulances (id, callsign, crew, status, location, last_update)
+       VALUES ($1, $2, $3, $4, $5, to_char(CURRENT_TIMESTAMP, 'HH24:MI'))
+       RETURNING id, callsign, crew, status, location, last_update as "lastUpdate"`,
+      [id, callsign, crew || 2, status || 'AVAILABLE', location]
+    );
+
+    res.status(201).json({ success: true, data: insertRes.rows[0] });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/resources/equipment
+resourcesRouter.post('/equipment', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { name, qty, available, location } = req.body;
+    if (!name || !location) {
+      res.status(400).json({ success: false, error: 'name and location are required.' });
+      return;
+    }
+    const totalQty = qty || 0;
+    const availableQty = available !== undefined ? available : totalQty;
+    const status = availableQty <= 0 ? 'DEPLETED' : availableQty < totalQty ? 'PARTIAL' : 'AVAILABLE';
+    const id = `EQP-${Math.floor(10 + Math.random() * 90)}`;
+
+    const insertRes = await query(
+      `INSERT INTO equipment (id, name, qty, available, status, location)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING id, name, qty, available, status, location`,
+      [id, name, totalQty, availableQty, status, location]
+    );
+
+    res.status(201).json({ success: true, data: insertRes.rows[0] });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});

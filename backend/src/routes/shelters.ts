@@ -40,6 +40,31 @@ sheltersRouter.get('/', async (req: Request, res: Response): Promise<void> => {
   }
 });
 
+// POST /api/shelters
+sheltersRouter.post('/', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { name, capacity, occupancy, status, address, accessible, facilities } = req.body;
+    if (!name || capacity === undefined) {
+      res.status(400).json({ success: false, error: 'name and capacity are required.' });
+      return;
+    }
+    const id = `SHL-${Math.floor(10 + Math.random() * 90)}`;
+    const shelterStatus = status || (occupancy && occupancy / capacity > 0.9 ? 'NEAR FULL' : 'OPEN');
+
+    const insertRes = await query(
+      `INSERT INTO shelters (id, name, address, capacity, occupancy, status, accessible, facilities)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       RETURNING id, name, address, capacity, occupancy,
+         (capacity - occupancy) as available, status, accessible, facilities`,
+      [id, name, address || '', capacity, occupancy || 0, shelterStatus, accessible !== false, facilities || ['Food', 'Water']]
+    );
+
+    res.status(201).json({ success: true, data: insertRes.rows[0] });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // PATCH /api/shelters/:id
 sheltersRouter.patch('/:id', async (req: Request, res: Response): Promise<void> => {
   try {

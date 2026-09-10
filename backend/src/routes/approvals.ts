@@ -165,7 +165,7 @@ approvalsRouter.post('/:id/approve', authenticateToken, async (req: Request, res
     });
   } catch (err: any) {
     console.error('[Approvals Error] POST /:id/approve:', err.message);
-    res.status(500).json({ success: false, error: 'Failed to approve dispatch plan.' });
+    res.status(500).json({ success: false, error: err.message || 'Failed to approve dispatch plan.' });
   }
 });
 

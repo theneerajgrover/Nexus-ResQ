@@ -2,7 +2,7 @@
 // CITIZEN EMERGENCY & SOS REQUESTS ROUTER
 // ============================================================
 import { Router, Request, Response } from 'express';
-import { query } from '../db';
+import { query, getClient } from '../db';
 import { optionalAuth } from '../middleware/auth';
 
 export const emergencyRouter = Router();
@@ -104,134 +104,220 @@ emergencyRouter.post('/request', optionalAuth, async (req: Request, res: Respons
     const effectiveDetails = (details || description || '').trim() || `Assistance requested: ${assistanceArray.join(', ')}`;
     const userId = req.user?.id || null;
 
+    // Duplicate Protection: check if an identical request was submitted in the last 5 seconds
+    const dupCheck = await query(
+      `SELECT id, incident_id FROM emergency_requests 
+       WHERE (requester_ip = $1 OR (user_id IS NOT NULL AND user_id = $2))
+         AND emergency_type = $3
+         AND created_at >= NOW() - INTERVAL '5 seconds'
+       ORDER BY created_at DESC LIMIT 1`,
+      [clientIp, userId, effectiveType]
+    ).catch(() => ({ rowCount: 0, rows: [] }));
+
+    if (dupCheck.rowCount && dupCheck.rowCount > 0) {
+      const existing = dupCheck.rows[0];
+      const fullReq = await query(`SELECT * FROM emergency_requests WHERE id = $1`, [existing.id]);
+      if (fullReq.rowCount && fullReq.rowCount > 0) {
+        const saved = fullReq.rows[0];
+        res.status(200).json({
+          success: true,
+          message: 'Emergency request already registered.',
+          data: {
+            id: saved.id,
+            requestId: saved.id,
+            incidentId: existing.incident_id,
+            incident_id: existing.incident_id,
+            status: saved.status,
+            location: saved.location,
+            formattedAddress: saved.formatted_address || saved.location,
+            latitude: saved.latitude ? parseFloat(saved.latitude) : null,
+            longitude: saved.longitude ? parseFloat(saved.longitude) : null,
+            accuracy: saved.accuracy ? parseFloat(saved.accuracy) : null,
+            deviceLatitude: saved.device_latitude ? parseFloat(saved.device_latitude) : null,
+            deviceLongitude: saved.device_longitude ? parseFloat(saved.device_longitude) : null,
+            incidentLatitude: saved.incident_latitude ? parseFloat(saved.incident_latitude) : null,
+            incidentLongitude: saved.incident_longitude ? parseFloat(saved.incident_longitude) : null,
+            placeId: saved.place_id,
+            locality: saved.locality,
+            city: saved.city,
+            district: saved.district,
+            state: saved.state,
+            postalCode: saved.postal_code,
+            country: saved.country,
+            locationVerified: saved.location_verified,
+            locationSource: saved.location_source,
+            assistance_types: saved.assistance_types,
+            assistance_needed: saved.assistance_requested,
+          },
+        });
+        return;
+      }
+    }
+
     const sosId = `SOS-${Math.floor(10000 + Math.random() * 90000)}`;
     const incId = `INC-${Math.floor(10000 + Math.random() * 90000)}`;
+    const incidentLat = incLat ?? (validLat ?? 0);
+    const incidentLon = incLon ?? (validLon ?? 0);
 
-    // 5. Insert into PostgreSQL emergency_requests table with full location persistence
-    const insertRes = await query(
-      `INSERT INTO emergency_requests (
-        id, user_id, emergency_type, assistance_types, assistance_requested, location, latitude, longitude,
-        accuracy, details, contact_name, requester_name, contact_phone, phone_number, requester_ip, source,
-        status, incident_id, created_at, updated_at,
-        device_latitude, device_longitude, device_accuracy_meters, device_location_timestamp,
-        incident_latitude, incident_longitude, incident_accuracy_meters,
-        formatted_address, place_id, village, locality, city, district, state, postal_code, country,
-        location_source, location_verified, location_confidence, location_resolved_at
-      ) VALUES (
-        $1, $2, $3, $4, $4, $5, $6, $7,
-        $8, $9, $10, $10, $11, $11, $12, 'WEB_EMERGENCY',
-        'REQUESTED', $13, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
-        $14, $15, $16, $17,
-        $18, $19, $20,
-        $21, $22, $23, $24, $25, $26, $27, $28, $29,
-        $30, $31, $32, $33
-      )
-      RETURNING *`,
-      [
-        sosId,
-        userId,
-        effectiveType,
-        assistanceArray,
-        effectiveLocation,
-        incLat ?? validLat,
-        incLon ?? validLon,
-        incAcc ?? validAccuracy,
-        effectiveDetails,
-        effectiveName,
-        effectivePhone,
-        clientIp,
-        incId,
-        devLat,
-        devLon,
-        devAcc,
-        devTime,
-        incLat,
-        incLon,
-        incAcc,
-        formattedAddress,
-        placeId,
-        village,
-        locality,
-        city,
-        district,
-        state,
-        postalCode,
-        country,
-        locationSource,
-        locationVerified,
-        locationConfidence,
-        resolvedAt,
-      ]
-    );
-
-    const savedRequest = insertRes.rows[0];
-
-    // 6. Spawn active incident in Command feed with location & coordinates
     const incidentType = ['STRUCTURAL', 'FLOOD', 'MEDICAL', 'FIRE', 'EVACUATION'].includes(effectiveType)
       ? effectiveType
       : 'OTHER';
 
-    const incidentLat = incLat ?? (validLat ?? 0);
-    const incidentLon = incLon ?? (validLon ?? 0);
+    let savedRequest: any;
+    const client = await getClient();
+    try {
+      await client.query('BEGIN');
 
-    await query(
-      `INSERT INTO incidents (
-        id, title, type, severity, location, latitude, longitude, status, responders_count, pending, request_id,
-        place_id, formatted_address, village, locality, city, district, state, postal_code, country, location_source, location_verified
-      )
-      VALUES ($1, $2, $3, 'HIGH', $4, $5, $6, 'REQUESTED', 0, TRUE, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
-      ON CONFLICT (id) DO UPDATE SET 
-        request_id = $7,
-        latitude = EXCLUDED.latitude,
-        longitude = EXCLUDED.longitude,
-        location = EXCLUDED.location`,
-      [
-        incId,
-        `Citizen SOS: ${effectiveType} (${assistanceArray.join(', ')})`,
-        incidentType,
-        effectiveLocation,
-        incidentLat,
-        incidentLon,
-        sosId,
-        placeId,
-        formattedAddress,
-        village,
-        locality,
-        city,
-        district,
-        state,
-        postalCode,
-        country,
-        locationSource,
-        locationVerified,
-      ]
-    ).catch((err: any) => console.warn('[Emergency] Incident insert notice:', err.message));
+      // 5. Insert into PostgreSQL emergency_requests table with full location persistence
+      const insertRes = await client.query(
+        `INSERT INTO emergency_requests (
+          id, user_id, emergency_type, assistance_types, assistance_requested, location, latitude, longitude,
+          accuracy, details, contact_name, requester_name, contact_phone, phone_number, requester_ip, source,
+          status, incident_id, created_at, updated_at,
+          device_latitude, device_longitude, device_accuracy_meters, device_location_timestamp,
+          incident_latitude, incident_longitude, incident_accuracy_meters,
+          formatted_address, place_id, village, locality, city, district, state, postal_code, country,
+          location_source, location_verified, location_confidence, location_resolved_at
+        ) VALUES (
+          $1, $2, $3, $4, $4, $5, $6, $7,
+          $8, $9, $10, $10, $11, $11, $12, 'WEB_EMERGENCY',
+          'REQUESTED', $13, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
+          $14, $15, $16, $17,
+          $18, $19, $20,
+          $21, $22, $23, $24, $25, $26, $27, $28, $29,
+          $30, $31, $32, $33
+        )
+        RETURNING *`,
+        [
+          sosId,
+          userId,
+          effectiveType,
+          assistanceArray,
+          effectiveLocation,
+          incLat ?? validLat,
+          incLon ?? validLon,
+          incAcc ?? validAccuracy,
+          effectiveDetails,
+          effectiveName,
+          effectivePhone,
+          clientIp,
+          incId,
+          devLat,
+          devLon,
+          devAcc,
+          devTime,
+          incLat,
+          incLon,
+          incAcc,
+          formattedAddress,
+          placeId,
+          village,
+          locality,
+          city,
+          district,
+          state,
+          postalCode,
+          country,
+          locationSource,
+          locationVerified,
+          locationConfidence,
+          resolvedAt,
+        ]
+      );
+      savedRequest = insertRes.rows[0];
 
-    // 7. Initial Entry in incident_status_history
-    await query(
-      `INSERT INTO incident_status_history (id, request_id, incident_id, previous_status, new_status, actor, notes, created_at)
-       VALUES ($1, $2, $3, NULL, 'REQUESTED', $4, $5, CURRENT_TIMESTAMP)`,
-      [
-        `HIST-${Date.now()}`,
-        sosId,
-        incId,
-        effectiveName,
-        `Citizen emergency registered at ${effectiveLocation} (Verified: ${locationVerified ? 'YES' : 'PENDING_CONFIRMATION'}).`,
-      ]
-    ).catch(() => {});
+      // 6. Spawn active incident in Command feed with location & coordinates
+      await client.query(
+        `INSERT INTO incidents (
+          id, title, type, severity, location, latitude, longitude, status, responders_count, pending, request_id,
+          place_id, formatted_address, village, locality, city, district, state, postal_code, country, location_source, location_verified
+        )
+        VALUES ($1, $2, $3, 'HIGH', $4, $5, $6, 'REQUESTED', 0, TRUE, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+        ON CONFLICT (id) DO UPDATE SET 
+          request_id = $7,
+          latitude = EXCLUDED.latitude,
+          longitude = EXCLUDED.longitude,
+          location = EXCLUDED.location`,
+        [
+          incId,
+          `Citizen SOS: ${effectiveType} (${assistanceArray.join(', ')})`,
+          incidentType,
+          effectiveLocation,
+          incidentLat,
+          incidentLon,
+          sosId,
+          placeId,
+          formattedAddress,
+          village,
+          locality,
+          city,
+          district,
+          state,
+          postalCode,
+          country,
+          locationSource,
+          locationVerified,
+        ]
+      );
 
-    // 8. Notification in notifications table
-    const notifId = `NOTIF-${Date.now()}`;
-    await query(
-      `INSERT INTO notifications (id, role, type, priority, incident_id, title, message, status)
-       VALUES ($1, 'authority_command', 'EMERGENCY_REQUEST_RECEIVED', 'CRITICAL', $2, $3, $4, 'UNREAD')`,
-      [
-        notifId,
-        incId,
-        'Emergency Request Received',
-        `New ${effectiveType} SOS reported by ${effectiveName} at ${effectiveLocation}.`,
-      ]
-    ).catch(() => {});
+      // 7. Initial Entry in incident_status_history
+      await client.query(
+        `INSERT INTO incident_status_history (id, request_id, incident_id, previous_status, new_status, actor, notes, created_at)
+         VALUES ($1, $2, $3, NULL, 'REQUESTED', $4, $5, CURRENT_TIMESTAMP)`,
+        [
+          `HIST-${Date.now()}`,
+          sosId,
+          incId,
+          effectiveName,
+          `Citizen emergency registered at ${effectiveLocation} (Verified: ${locationVerified ? 'YES' : 'PENDING_CONFIRMATION'}).`,
+        ]
+      );
+
+      // 8. Notification in notifications table
+      const notifId = `NOTIF-${Date.now()}`;
+      await client.query(
+        `INSERT INTO notifications (id, role, type, priority, incident_id, title, message, status)
+         VALUES ($1, 'authority_command', 'EMERGENCY_REQUEST_RECEIVED', 'CRITICAL', $2, $3, $4, 'UNREAD')`,
+        [
+          notifId,
+          incId,
+          'Emergency Request Received',
+          `New ${effectiveType} SOS reported by ${effectiveName} at ${effectiveLocation}.`,
+        ]
+      );
+
+      // 10. Audit log
+      await client.query(
+        `INSERT INTO audit_logs (id, actor, action, entity, metadata) VALUES ($1, $2, $3, $4, $5)`,
+        [
+          `AUD-${Date.now()}`,
+          effectiveName,
+          'EMERGENCY_REQUEST_SUBMITTED',
+          'emergency_requests',
+          JSON.stringify({
+            sosId,
+            incId,
+            location: effectiveLocation,
+            assistance: assistanceArray,
+            requesterIp: clientIp,
+            hasCoordinates: validLat !== null,
+            accuracy: validAccuracy,
+          }),
+        ]
+      );
+
+      await client.query('COMMIT');
+    } catch (txErr: any) {
+      await client.query('ROLLBACK').catch(() => {});
+      console.error('[Emergency] Database transaction failed during SOS creation:', txErr.message);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to record emergency request in database. Please try again or call emergency services directly.'
+      });
+      return;
+    } finally {
+      client.release();
+    }
 
     // 9. Real-time SSE Broadcast
     const { broadcastEvent } = await import('./realtime');
@@ -239,40 +325,22 @@ emergencyRouter.post('/request', optionalAuth, async (req: Request, res: Respons
       requestId: sosId,
       incidentId: incId,
       location: effectiveLocation,
-      latitude: validLat,
-      longitude: validLon,
-      accuracy: validAccuracy,
+      formattedAddress: formattedAddress,
+      latitude: incidentLat,
+      longitude: incidentLon,
+      accuracy: incAcc ?? validAccuracy,
       emergencyType: effectiveType,
       assistance: assistanceArray,
       status: 'REQUESTED',
+      pending: true,
       timestamp: Date.now(),
     });
     broadcastEvent('NOTIFICATION_CREATED', {
-      id: notifId,
+      id: `NOTIF-${Date.now()}`,
       title: 'Emergency Request Received',
       priority: 'CRITICAL',
       incidentId: incId,
     });
-
-    // 10. Audit log
-    await query(
-      `INSERT INTO audit_logs (id, actor, action, entity, metadata) VALUES ($1, $2, $3, $4, $5)`,
-      [
-        `AUD-${Date.now()}`,
-        effectiveName,
-        'EMERGENCY_REQUEST_SUBMITTED',
-        'emergency_requests',
-        JSON.stringify({
-          sosId,
-          incId,
-          location: effectiveLocation,
-          assistance: assistanceArray,
-          requesterIp: clientIp,
-          hasCoordinates: validLat !== null,
-          accuracy: validAccuracy,
-        }),
-      ]
-    ).catch(() => {});
 
     // 11. Auto-trigger 11-agent AI orchestration pipeline for the new incident (fire-and-forget)
     import('../services/agentOrchestrator').then(({ agentOrchestrator }) => {

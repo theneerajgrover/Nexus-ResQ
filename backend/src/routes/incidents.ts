@@ -61,6 +61,23 @@ incidentsRouter.get('/:id', async (req: Request, res: Response): Promise<void> =
   }
 });
 
+// GET /api/incidents/:id/history
+incidentsRouter.get('/:id/history', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const result = await query(
+      `SELECT id, request_id, incident_id, previous_status, new_status, actor, responder_id, notes, to_char(created_at, 'HH24:MI') as time, created_at
+       FROM incident_status_history
+       WHERE incident_id = $1
+       ORDER BY created_at ASC`,
+      [id]
+    );
+    res.json({ success: true, data: result.rows, count: result.rowCount });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // POST /api/incidents
 incidentsRouter.post('/', async (req: Request, res: Response): Promise<void> => {
   try {

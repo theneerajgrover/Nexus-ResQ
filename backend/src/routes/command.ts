@@ -13,14 +13,34 @@ export const commandRouter = Router();
 // GET /api/command/overview
 commandRouter.get('/overview', async (req: Request, res: Response): Promise<void> => {
   try {
-    const [incidentsRes, respondersRes, regionsRes, agentsRes, recommendationRes, activePlanRes, pendingApprovalRes] = await Promise.all([
+    const [
+      incidentsRes,
+      respondersRes,
+      regionsRes,
+      agentsRes,
+      recommendationRes,
+      activePlanRes,
+      pendingApprovalRes,
+      dispatchesRes,
+      historyRes,
+      emergencyCountRes,
+    ] = await Promise.all([
       query(`
-        SELECT id, type, severity, latitude as lat, longitude as lng, status, responders_count as responders, pending
-        FROM incidents ORDER BY pending DESC, created_at DESC LIMIT 10
+        SELECT id, title, type, severity, location, latitude as lat, longitude as lng, status, responders_count as responders, pending, assigned_responder_id, created_at as "createdAt", updated_at as "updatedAt"
+        FROM incidents 
+        ORDER BY 
+          CASE 
+            WHEN status IN ('RESPONDING', 'DISPATCHED', 'ACTIVE') THEN 0 
+            WHEN pending THEN 1 
+            ELSE 2 
+          END, 
+          updated_at DESC, 
+          created_at DESC 
+        LIMIT 50
       `),
       query(`
-        SELECT id, name, status, latitude as lat, longitude as lng, current_incident_id as incident
-        FROM responders ORDER BY id ASC LIMIT 10
+        SELECT id, name, callsign, status, latitude as lat, longitude as lng, current_incident_id as incident
+        FROM responders ORDER BY updated_at DESC, id ASC LIMIT 50
       `),
       query(`
         SELECT region_name as region, risk_score as risk, incident_count as incidents, evacuees_count as evacuees, trend
@@ -76,6 +96,42 @@ commandRouter.get('/overview', async (req: Request, res: Response): Promise<void
         ORDER BY a.created_at DESC
         LIMIT 1
       `),
+      query(`
+        SELECT 
+          id, 
+          resource_type as "resourceType", 
+          qty_approved as "qtyApproved", 
+          qty_dispatched as "qtyDispatched", 
+          destination, 
+          incident_id as incident, 
+          unit, 
+          status, 
+          approved_by as "approvedBy", 
+          to_char(created_at, 'HH24:MI') as timestamp,
+          created_at
+        FROM dispatch_records
+        ORDER BY created_at DESC
+        LIMIT 25
+      `),
+      query(`
+        SELECT 
+          id, 
+          request_id, 
+          incident_id, 
+          previous_status, 
+          new_status, 
+          actor, 
+          responder_id, 
+          notes, 
+          to_char(created_at, 'HH24:MI') as time,
+          created_at
+        FROM incident_status_history
+        ORDER BY created_at DESC
+        LIMIT 30
+      `),
+      query(`
+        SELECT count(*)::int as count FROM emergency_requests
+      `),
     ]);
 
     res.json({
@@ -89,6 +145,9 @@ commandRouter.get('/overview', async (req: Request, res: Response): Promise<void
         activePlan: activePlanRes.rows[0] || null,
         pendingRecommendation: recommendationRes.rows[0] || null,
         pendingApproval: pendingApprovalRes.rows[0] || null,
+        dispatches: dispatchesRes.rows,
+        history: historyRes.rows,
+        emergencyCount: emergencyCountRes.rows[0]?.count || 0,
       },
     });
   } catch (err: any) {
@@ -153,8 +212,8 @@ commandRouter.post('/recommendations/:id/action', async (req: Request, res: Resp
 
     const newStatus = ['APPROVE', 'ALLOW'].includes(action.toUpperCase()) ? 'APPROVED' : 'REJECTED';
     
-    // Resolve reviewer identity from JWT token or payload
-    let reviewer = approvedBy || 'Dir. Sarah Chen';
+    // Resolve reviewer identity and enforce authority role from JWT token or payload
+    let reviewer = approvedBy || 'Command Officer';
     const authHeader = req.headers['authorization'];
     if (authHeader) {
       const token = authHeader.split(' ')[1];
@@ -164,26 +223,48 @@ commandRouter.post('/recommendations/:id/action', async (req: Request, res: Resp
           if (decoded && decoded.name) {
             reviewer = decoded.name;
           }
+          if (decoded && decoded.role && !['authority_command', 'authority', 'admin'].includes(decoded.role)) {
+            res.status(403).json({
+              success: false,
+              error: 'Forbidden: Only Authority/Command personnel can authorize dispatch plans.',
+            });
+            return;
+          }
         } catch {}
       }
     }
 
     // 0. Concurrency & Atomicity protection: Verify plan has not already received a decision
     const checkStatus = await query(`
-      SELECT status FROM orchestration_plans WHERE id = $1 OR plan_id = $1
+      SELECT status, approval_status FROM orchestration_plans WHERE id = $1 OR plan_id = $1
       UNION ALL
-      SELECT status FROM approvals WHERE approval_id = $1 OR plan_id = $1
+      SELECT status, status as approval_status FROM approvals WHERE approval_id = $1 OR plan_id = $1
       UNION ALL
-      SELECT status FROM ai_recommendations WHERE id = $1
+      SELECT status, status as approval_status FROM ai_recommendations WHERE id = $1
     `, [id]);
-    const alreadyDecided = checkStatus.rows.find((r: any) => r.status === 'APPROVED' || r.status === 'REJECTED');
+    const alreadyDecided = checkStatus.rows.find((r: any) =>
+      r.status === 'APPROVED' || r.approval_status === 'APPROVED' ||
+      r.status === 'EXECUTING' || r.status === 'MONITORING' ||
+      r.status === 'COMPLETE' || r.status === 'REJECTED' || r.approval_status === 'REJECTED'
+    );
     if (alreadyDecided) {
-      if (alreadyDecided.status === newStatus) {
+      const isApprovedDecision = alreadyDecided.status === 'APPROVED' || alreadyDecided.approval_status === 'APPROVED' ||
+        alreadyDecided.status === 'EXECUTING' || alreadyDecided.status === 'MONITORING' || alreadyDecided.status === 'COMPLETE';
+      if (isApprovedDecision && newStatus === 'APPROVED') {
         res.json({
           success: true,
-          message: `Response plan ${id} has already been recorded as ${alreadyDecided.status}.`,
-          decision: alreadyDecided.status,
-          status: alreadyDecided.status,
+          message: `Response plan ${id} has already been recorded as APPROVED.`,
+          decision: 'APPROVED',
+          status: 'APPROVED',
+        });
+        return;
+      }
+      if (!isApprovedDecision && newStatus === 'REJECTED') {
+        res.json({
+          success: true,
+          message: `Response plan ${id} has already been recorded as REJECTED.`,
+          decision: 'REJECTED',
+          status: 'REJECTED',
         });
         return;
       }
@@ -212,7 +293,7 @@ commandRouter.post('/recommendations/:id/action', async (req: Request, res: Resp
     });
   } catch (err: any) {
     console.error('[Command Error] /recommendations/:id/action:', err.message);
-    res.status(500).json({ success: false, error: err.message });
+    res.status(500).json({ success: false, error: err.message || 'Failed to process plan authorization.' });
   }
 });
 
