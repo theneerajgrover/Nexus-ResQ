@@ -57,13 +57,22 @@ commandRouter.get('/overview', async (req: Request, res: Response): Promise<void
       query(`
         SELECT 
           p.*,
-          coalesce(a.status, p.status) as approval_status,
+          coalesce(a.status, p.approval_status, p.status) as approval_status,
           a.decision as approval_decision,
           a.reviewed_by,
           a.reviewed_at
         FROM orchestration_plans p
         LEFT JOIN approvals a ON (a.plan_id = p.plan_id OR a.plan_id = p.id OR a.approval_id = p.approval_id)
-        ORDER BY p.created_at DESC LIMIT 1
+        ORDER BY 
+          CASE 
+            WHEN coalesce(a.status, p.approval_status, p.status) = 'PENDING' OR p.status = 'WAITING_FOR_APPROVAL' THEN 0 
+            WHEN p.status IN ('IN_PROGRESS', 'PROCESSING') THEN 1 
+            WHEN p.status = 'EXECUTING' THEN 2 
+            WHEN p.status = 'MONITORING' THEN 3 
+            ELSE 4 
+          END, 
+          p.created_at DESC 
+        LIMIT 1
       `),
       query(`
         SELECT 

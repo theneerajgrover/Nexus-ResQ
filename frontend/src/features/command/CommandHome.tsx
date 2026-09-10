@@ -767,10 +767,12 @@ function AgentPipeline({
   onApprove,
   activePlan,
   agentsList,
+  activeApproval,
 }: {
   onApprove: () => void;
   activePlan?: any;
   agentsList?: any[];
+  activeApproval?: any;
 }) {
   const currentAgents = agentsList && agentsList.length ? agentsList : agents;
   const prog = agentProgress(currentAgents);
@@ -778,18 +780,63 @@ function AgentPipeline({
   const totalSteps = activePlan?.total_steps || prog.total || 11;
   const barFill = `${Math.min(100, Math.round((currentStep / totalSteps) * 100))}%`;
 
+  // Explicit, authoritative lifecycle state resolution derived directly from database data
+  const isApproved =
+    activePlan?.status === 'APPROVED' ||
+    activePlan?.approval_status === 'APPROVED' ||
+    activeApproval?.status === 'APPROVED';
+
+  const isRejected =
+    activePlan?.status === 'REJECTED' ||
+    activePlan?.approval_status === 'REJECTED' ||
+    activeApproval?.status === 'REJECTED';
+
+  const hasPendingApproval =
+    Boolean(activeApproval && (activeApproval.status === 'PENDING' || !activeApproval.status)) ||
+    activePlan?.status === 'WAITING_FOR_APPROVAL' ||
+    activePlan?.approval_status === 'PENDING' ||
+    activePlan?.orchestration_status === 'WAITING_FOR_APPROVAL';
+
+  const isProcessing =
+    !isApproved &&
+    !isRejected &&
+    (activePlan?.status === 'PROCESSING' || activePlan?.status === 'IN_PROGRESS' || (currentStep > 0 && currentStep < totalSteps));
+
+  // 11/11 complete + approval pending -> HUMAN AUTHORIZATION REQUIRED
   const isWaitingForApproval =
-    ((currentStep === 11 && (activePlan?.status === 'WAITING_FOR_APPROVAL' || activePlan?.orchestration_status === 'WAITING_FOR_APPROVAL')) ||
-      activePlan?.approval_status === 'PENDING') &&
-    activePlan?.status !== 'APPROVED' &&
-    activePlan?.approval_status !== 'APPROVED' &&
-    activePlan?.status !== 'REJECTED' &&
-    activePlan?.approval_status !== 'REJECTED';
-  const isExecuting = activePlan?.status === 'EXECUTING';
-  const isMonitoring = activePlan?.status === 'MONITORING';
-  const isIdle = activePlan?.status === 'NO_ACTIVE_INCIDENTS';
-  const isCompleted = currentStep === 11 && (activePlan?.status === 'APPROVED' || activePlan?.status === 'COMPLETE' || activePlan?.approval_status === 'APPROVED');
-  const isProcessing = activePlan?.status === 'PROCESSING' || (currentStep > 0 && currentStep < 11);
+    !isProcessing &&
+    !isApproved &&
+    !isRejected &&
+    (hasPendingApproval || (currentStep >= totalSteps && activePlan?.status !== 'EXECUTING' && activePlan?.status !== 'MONITORING' && activePlan?.status !== 'COMPLETE'));
+
+  // Execution phase strictly following human approval
+  const isExecuting =
+    !isProcessing &&
+    !isWaitingForApproval &&
+    (activePlan?.status === 'EXECUTING' || (isApproved && activePlan?.execution_status === 'DISPATCHED' && activePlan?.status !== 'MONITORING' && activePlan?.status !== 'COMPLETE'));
+
+  // Operational monitoring phase: strictly ONLY after human approval and execution/monitoring transition has occurred
+  const isMonitoring =
+    !isProcessing &&
+    !isWaitingForApproval &&
+    !isExecuting &&
+    isApproved &&
+    (activePlan?.status === 'MONITORING' || activePlan?.current_stage === 'MONITORING SITUATION');
+
+  const isCompleted =
+    !isProcessing &&
+    !isWaitingForApproval &&
+    !isExecuting &&
+    !isMonitoring &&
+    (activePlan?.status === 'COMPLETE' || activePlan?.status === 'COMPLETED');
+
+  const isIdle =
+    !isProcessing &&
+    !isWaitingForApproval &&
+    !isExecuting &&
+    !isMonitoring &&
+    !isCompleted &&
+    (activePlan?.status === 'NO_ACTIVE_INCIDENTS' || activePlan?.status === 'IDLE');
 
   let buttonText = 'NO PENDING APPROVALS';
   let buttonDisabled = true;
@@ -800,7 +847,7 @@ function AgentPipeline({
   };
 
   if (isWaitingForApproval) {
-    buttonText = 'REVIEW & APPROVE PLAN';
+    buttonText = 'HUMAN AUTHORIZATION REQUIRED';
     buttonDisabled = false;
     buttonStyle = {
       background: 'rgba(245,158,11,0.2)',
@@ -934,6 +981,7 @@ function HomeTab({
   incidentsList,
   respondersList,
   emergencyCount,
+  activeApproval,
 }: {
   onApprove: () => void;
   activePlan?: any;
@@ -941,6 +989,7 @@ function HomeTab({
   incidentsList?: any[];
   respondersList?: any[];
   emergencyCount?: number;
+  activeApproval?: any;
 }) {
   const lastUpdated = useLastUpdated(5000);
   const currentIncidents = incidentsList || [];
@@ -1045,7 +1094,7 @@ function HomeTab({
       </div>
 
       <div className="w-64 shrink-0">
-        <AgentPipeline onApprove={onApprove} activePlan={activePlan} agentsList={agentsList} />
+        <AgentPipeline onApprove={onApprove} activePlan={activePlan} agentsList={agentsList} activeApproval={activeApproval} />
       </div>
     </div>
   );
@@ -2978,8 +3027,9 @@ export default function CommandHome() {
 
   const onApprove = useCallback(() => {
     if (
-      (activeApproval && activeApproval.status === 'PENDING') ||
-      (activePlan?.status === 'WAITING_FOR_APPROVAL' && activePlan?.approval_status !== 'APPROVED' && activePlan?.approval_status !== 'REJECTED')
+      (activeApproval && (activeApproval.status === 'PENDING' || !activeApproval.status)) ||
+      (activePlan?.status === 'WAITING_FOR_APPROVAL' && activePlan?.approval_status !== 'APPROVED' && activePlan?.approval_status !== 'REJECTED') ||
+      (activePlan?.approval_status === 'PENDING')
     ) {
       setShowApproval(true);
     }
@@ -3091,6 +3141,7 @@ export default function CommandHome() {
                   incidentsList={liveIncidents}
                   respondersList={liveResponders}
                   emergencyCount={emergencyCount}
+                  activeApproval={activeApproval}
                 />
               </div>
             )}
