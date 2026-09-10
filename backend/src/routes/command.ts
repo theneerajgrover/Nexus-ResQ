@@ -24,6 +24,7 @@ commandRouter.get('/overview', async (req: Request, res: Response): Promise<void
       dispatchesRes,
       historyRes,
       emergencyCountRes,
+      resourceEmergenciesRes,
     ] = await Promise.all([
       query(`
         SELECT id, title, type, severity, location, latitude as lat, longitude as lng, status, responders_count as responders, pending, assigned_responder_id, created_at as "createdAt", updated_at as "updatedAt"
@@ -132,6 +133,11 @@ commandRouter.get('/overview', async (req: Request, res: Response): Promise<void
       query(`
         SELECT count(*)::int as count FROM emergency_requests
       `),
+      query(`
+        SELECT * FROM resource_manager_emergencies
+        WHERE status = 'EMERGENCY_AFFECTED'
+        ORDER BY created_at DESC
+      `),
     ]);
 
     res.json({
@@ -148,6 +154,7 @@ commandRouter.get('/overview', async (req: Request, res: Response): Promise<void
         dispatches: dispatchesRes.rows,
         history: historyRes.rows,
         emergencyCount: emergencyCountRes.rows[0]?.count || 0,
+        activeResourceEmergencies: resourceEmergenciesRes.rows,
       },
     });
   } catch (err: any) {

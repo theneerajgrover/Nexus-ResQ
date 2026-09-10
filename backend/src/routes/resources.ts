@@ -3,19 +3,24 @@
 // ============================================================
 import { Router, Request, Response } from 'express';
 import { query } from '../db';
+import { broadcastEvent } from './realtime';
 
 export const resourcesRouter = Router();
 
 // GET /api/resources/overview
 resourcesRouter.get('/overview', async (req: Request, res: Response): Promise<void> => {
   try {
-    const [suppliesRes, sheltersRes, ambulancesRes, dispatchesRes, respondersRes] = await Promise.all([
+    const [suppliesRes, sheltersRes, ambulancesRes, dispatchesRes, respondersRes, activeEmergencyRes] = await Promise.all([
       query(`SELECT count(*)::int as count FROM supplies WHERE qty < demand`),
       query(`SELECT count(*)::int as count FROM shelters WHERE status = 'NEAR FULL'`),
       query(`SELECT count(*)::int as count FROM ambulances WHERE status = 'AVAILABLE'`),
       query(`SELECT count(*)::int as count FROM dispatch_records WHERE status = 'PENDING'`),
       query(`SELECT count(*)::int as count FROM responders WHERE status = 'AVAILABLE'`),
+      query(`SELECT * FROM resource_manager_emergencies WHERE status = 'EMERGENCY_AFFECTED' ORDER BY created_at DESC LIMIT 1`),
     ]);
+
+    const activeEmergency = activeEmergencyRes.rows[0] || null;
+    const operationalStatus = activeEmergency ? 'EMERGENCY — RESOURCE REQUEST REQUIRED' : 'OPERATIONAL';
 
     res.json({
       success: true,
@@ -25,9 +30,226 @@ resourcesRouter.get('/overview', async (req: Request, res: Response): Promise<vo
         availableAmbulances: ambulancesRes.rows[0]?.count || 0,
         pendingDispatches: dispatchesRes.rows[0]?.count || 0,
         availableResponders: respondersRes.rows[0]?.count || 0,
+        operationalStatus,
+        isAffected: !!activeEmergency,
+        activeEmergency,
       },
     });
   } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/resources/emergency-status
+resourcesRouter.get('/emergency-status', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const [activeRes, historyRes] = await Promise.all([
+      query(`SELECT * FROM resource_manager_emergencies WHERE status = 'EMERGENCY_AFFECTED' ORDER BY created_at DESC`),
+      query(`SELECT * FROM resource_manager_emergencies ORDER BY created_at DESC LIMIT 20`),
+    ]);
+
+    const isAffected = (activeRes.rowCount ?? 0) > 0;
+    const operationalStatus = isAffected ? 'EMERGENCY — RESOURCE REQUEST REQUIRED' : 'OPERATIONAL';
+
+    res.json({
+      success: true,
+      isAffected,
+      operationalStatus,
+      activeEmergency: activeRes.rows[0] || null,
+      activeEmergencies: activeRes.rows,
+      history: historyRes.rows,
+    });
+  } catch (err: any) {
+    console.error('[Resources Error] /emergency-status:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/resources/declare-emergency
+resourcesRouter.post('/declare-emergency', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const {
+      managerId,
+      location,
+      emergencyType,
+      severity,
+      description,
+      requestedResourceType,
+      requestedQuantity,
+      reservedLocalQuantity,
+    } = req.body;
+
+    if (!location || !location.trim()) {
+      res.status(400).json({ success: false, error: 'Location of the affected facility is mandatory.' });
+      return;
+    }
+    if (!emergencyType || !emergencyType.trim()) {
+      res.status(400).json({ success: false, error: 'Emergency type is mandatory.' });
+      return;
+    }
+    if (!description || description.trim().length < 5) {
+      res.status(400).json({ success: false, error: 'A descriptive reason for the emergency declaration is mandatory (min 5 characters).' });
+      return;
+    }
+
+    const rmeId = `RME-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
+    const effectiveManagerId = managerId || 'USR-004';
+    const effectiveSeverity = (severity || 'HIGH').toUpperCase();
+    const reqQty = parseInt(requestedQuantity, 10) || 0;
+    const resQty = parseInt(reservedLocalQuantity, 10) || 0;
+
+    const insertRes = await query(
+      `INSERT INTO resource_manager_emergencies (
+        id, manager_id, location, emergency_type, severity, status, description,
+        requested_resource_type, requested_quantity, reserved_local_quantity
+      ) VALUES ($1, $2, $3, $4, $5, 'EMERGENCY_AFFECTED', $6, $7, $8, $9)
+      RETURNING *`,
+      [
+        rmeId,
+        effectiveManagerId,
+        location.trim(),
+        emergencyType.trim(),
+        effectiveSeverity,
+        description.trim(),
+        requestedResourceType?.trim() || null,
+        reqQty,
+        resQty,
+      ]
+    );
+
+    const savedEmergency = insertRes.rows[0];
+
+    // Create persistent notification for Authority / Command in notifications table
+    const notifId = `NOTIF-RME-${Date.now()}`;
+    const notifPriority = effectiveSeverity === 'CRITICAL' ? 'CRITICAL' : 'HIGH';
+    const notifTitle = `EMERGENCY: ${location.trim()} Self-Emergency Declared`;
+    const notifMsg = `Resource Facility "${location.trim()}" has declared ${emergencyType} (${effectiveSeverity}). Description: ${description.trim()}. Requested Assistance: ${reqQty} ${requestedResourceType || 'units'}. Local Reserves Locked: ${resQty} units. Outgoing transfers restricted.`;
+
+    await query(
+      `INSERT INTO notifications (
+        id, user_id, role, type, priority, title, message, status
+      ) VALUES ($1, $2, 'authority_command', 'RESOURCE_MANAGER_EMERGENCY', $3, $4, $5, 'UNREAD')`,
+      [notifId, effectiveManagerId, notifPriority, notifTitle, notifMsg]
+    );
+
+    // Real-time broadcast
+    broadcastEvent('RESOURCE_MANAGER_EMERGENCY_DECLARED', {
+      emergencyId: rmeId,
+      location: location.trim(),
+      emergencyType: emergencyType.trim(),
+      severity: effectiveSeverity,
+      requestedResourceType: requestedResourceType?.trim() || null,
+      requestedQuantity: reqQty,
+      reservedLocalQuantity: resQty,
+      status: 'EMERGENCY_AFFECTED',
+      timestamp: Date.now(),
+    });
+    broadcastEvent('NOTIFICATION_CREATED', {
+      id: notifId,
+      title: notifTitle,
+      priority: notifPriority,
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Self-emergency declared successfully. Authority Command alerted and local reserve safeguards activated.',
+      operationalStatus: 'EMERGENCY — RESOURCE REQUEST REQUIRED',
+      data: savedEmergency,
+    });
+  } catch (err: any) {
+    console.error('[Resources Error] /declare-emergency:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/resources/restore-status
+resourcesRouter.post('/restore-status', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { emergencyId, location, restoredBy, notes } = req.body;
+    const effectiveRestorer = restoredBy || 'Resource Manager';
+
+    let updateRes;
+    if (emergencyId) {
+      updateRes = await query(
+        `UPDATE resource_manager_emergencies
+         SET status = 'RESTORED',
+             restored_at = CURRENT_TIMESTAMP,
+             restored_by = $1,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = $2 AND status = 'EMERGENCY_AFFECTED'
+         RETURNING *`,
+        [effectiveRestorer, emergencyId]
+      );
+    } else if (location) {
+      updateRes = await query(
+        `UPDATE resource_manager_emergencies
+         SET status = 'RESTORED',
+             restored_at = CURRENT_TIMESTAMP,
+             restored_by = $1,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE location = $2 AND status = 'EMERGENCY_AFFECTED'
+         RETURNING *`,
+        [effectiveRestorer, location]
+      );
+    } else {
+      updateRes = await query(
+        `UPDATE resource_manager_emergencies
+         SET status = 'RESTORED',
+             restored_at = CURRENT_TIMESTAMP,
+             restored_by = $1,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE status = 'EMERGENCY_AFFECTED'
+         RETURNING *`,
+        [effectiveRestorer]
+      );
+    }
+
+    if (updateRes.rowCount === 0) {
+      res.json({
+        success: true,
+        message: 'Facility is already in OPERATIONAL status. No active emergencies to restore.',
+        operationalStatus: 'OPERATIONAL',
+        data: [],
+      });
+      return;
+    }
+
+    const restoredLocation = location || updateRes.rows[0]?.location || 'All Sites';
+
+    // Create persistent notification for Authority / Command
+    const notifId = `NOTIF-RME-RESTORE-${Date.now()}`;
+    const notifTitle = `OPERATIONS RESTORED: ${restoredLocation}`;
+    const notifMsg = `Resource Facility "${restoredLocation}" has been restored to normal OPERATIONAL status by ${effectiveRestorer}. Notes: ${notes || 'Normal capacity and operations resumed.'}. All transfer restrictions have been lifted.`;
+
+    await query(
+      `INSERT INTO notifications (
+        id, role, type, priority, title, message, status
+      ) VALUES ($1, 'authority_command', 'RESOURCE_MANAGER_RESTORED', 'MODERATE', $2, $3, 'UNREAD')`,
+      [notifId, notifTitle, notifMsg]
+    );
+
+    // Real-time broadcast
+    broadcastEvent('RESOURCE_MANAGER_STATUS_RESTORED', {
+      location: restoredLocation,
+      restoredBy: effectiveRestorer,
+      restoredCount: updateRes.rowCount,
+      status: 'OPERATIONAL',
+      timestamp: Date.now(),
+    });
+    broadcastEvent('NOTIFICATION_CREATED', {
+      id: notifId,
+      title: notifTitle,
+      priority: 'MODERATE',
+    });
+
+    res.json({
+      success: true,
+      message: 'Operational status restored to normal. Resource transfer restrictions lifted.',
+      operationalStatus: 'OPERATIONAL',
+      data: updateRes.rows,
+    });
+  } catch (err: any) {
+    console.error('[Resources Error] /restore-status:', err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -121,7 +343,47 @@ resourcesRouter.get('/dispatches', async (req: Request, res: Response): Promise<
 // POST /api/resources/dispatches
 resourcesRouter.post('/dispatches', async (req: Request, res: Response): Promise<void> => {
   try {
-    const { resourceType, qtyApproved, qtyDispatched, destination, incident, unit, approvedBy } = req.body;
+    const { resourceType, qtyApproved, qtyDispatched, destination, incident, unit, approvedBy, sourceLocation } = req.body;
+
+    // 1. Check for Active Self-Emergency & Enforce Local Reserve Safeguards
+    const activeEmergencyQuery = sourceLocation
+      ? await query(`SELECT * FROM resource_manager_emergencies WHERE status = 'EMERGENCY_AFFECTED' AND location = $1`, [sourceLocation])
+      : await query(`SELECT * FROM resource_manager_emergencies WHERE status = 'EMERGENCY_AFFECTED' ORDER BY created_at DESC`);
+
+    if ((activeEmergencyQuery.rowCount ?? 0) > 0) {
+      const emergency = activeEmergencyQuery.rows[0];
+      const reservedQty = Number(emergency.reserved_local_quantity) || 0;
+      const requestedOutward = Number(qtyDispatched || qtyApproved || 1);
+
+      if (reservedQty > 0) {
+        // Query total inventory currently available at this location
+        const stockRes = await query(`
+          SELECT COALESCE(SUM(qty), 0)::int as total_stock
+          FROM supplies
+          WHERE location = $1
+        `, [emergency.location]);
+
+        const totalStock = Number(stockRes.rows[0]?.total_stock) || 0;
+        const availableForTransfer = Math.max(0, totalStock - reservedQty);
+
+        if (requestedOutward > availableForTransfer) {
+          res.status(400).json({
+            success: false,
+            error: `Transfer rejected: Location "${emergency.location}" is currently in self-emergency (${emergency.emergency_type}, severity: ${emergency.severity}). ${reservedQty} units are strictly reserved for local survival/operations. Available for external transfer: ${availableForTransfer} units. Requested dispatch: ${requestedOutward} units.`,
+            code: 'EMERGENCY_RESERVE_RESTRICTION',
+            emergencyId: emergency.id,
+            location: emergency.location,
+            emergencyType: emergency.emergency_type,
+            reservedLocalQuantity: reservedQty,
+            totalStock,
+            availableForTransfer,
+            requestedQuantity: requestedOutward,
+          });
+          return;
+        }
+      }
+    }
+
     const id = `DSP-${Math.floor(100 + Math.random() * 900)}`;
 
     const insertRes = await query(
