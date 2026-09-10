@@ -153,8 +153,9 @@ export default function AuthorityWeather() {
   };
 
   return (
-    <div className="w-full h-full p-6 overflow-y-auto max-w-7xl mx-auto space-y-6">
-      {/* Header */}
+    <div className="w-full h-full overflow-y-auto">
+      <div className="max-w-7xl mx-auto p-6 space-y-6">
+        {/* Header */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-white/10">
         <div>
           <div className="flex items-center gap-3">
@@ -427,6 +428,7 @@ export default function AuthorityWeather() {
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }

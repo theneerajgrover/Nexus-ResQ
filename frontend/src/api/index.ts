@@ -120,6 +120,10 @@ export const respondersApi = {
   getAssignedMission: () => apiClient.get('/responders/mission'),
   getHistory: (responderId?: string) =>
     apiClient.get(`/responders/history${responderId ? `?responder_id=${responderId}` : ''}`),
+  createResponder: (data: { name: string; callsign?: string; status?: string; latitude?: number; longitude?: number }) =>
+    apiClient.post('/responders', data),
+  updateResponderStatus: (id: string, status: string, currentIncidentId?: string | null) =>
+    apiClient.patch(`/responders/${id}`, { status, current_incident_id: currentIncidentId }),
   updateMissionStatus: (id: string, payload: string | { status: string; [key: string]: any }) => {
     const data = typeof payload === 'string' ? { status: payload } : payload;
     return apiClient.patch(`/responders/mission/${id}/status`, data);
@@ -140,6 +144,8 @@ export const resourcesApi = {
     apiClient.post('/resources/ambulances', data),
   createEquipment: (data: { name: string; qty: number; available?: number; location: string }) =>
     apiClient.post('/resources/equipment', data),
+  createResponder: (data: { name: string; callsign?: string; status?: string; latitude?: number; longitude?: number }) =>
+    apiClient.post('/resources/responders', data),
 };
 
 // ── Command Center Service ───────────────────────────────────
