@@ -73,7 +73,7 @@ async function main() {
 
   // Verify it appears in GET /api/approvals/pending
   const pendingRes = await fetch(`${API_BASE}/approvals/pending`, { headers: authHeaders });
-  const pendingData = await pendingRes.json();
+  const pendingData: any = await pendingRes.json();
   const foundInPending = pendingData.data.some((p: any) => p.plan_id === planId1 || p.approval_id === appId1);
   console.log(`Plan appears in Pending Approvals: ${foundInPending}`);
   if (!foundInPending) throw new Error('Test 1 failed: Plan not found in GET /approvals/pending');
@@ -84,7 +84,7 @@ async function main() {
     headers: authHeaders,
     body: JSON.stringify({}),
   });
-  const appApproveJson = await appApproveRes.json();
+  const appApproveJson: any = await appApproveRes.json();
   console.log(`Approve response:`, appApproveJson);
   if (!appApproveJson.success) throw new Error('Test 1 failed: Approval endpoint failed: ' + JSON.stringify(appApproveJson));
 
@@ -119,7 +119,7 @@ async function main() {
 
   // Verify plan is removed from Pending Approvals
   const pendingCheck2 = await fetch(`${API_BASE}/approvals/pending`, { headers: authHeaders });
-  const pendingData2 = await pendingCheck2.json();
+  const pendingData2: any = await pendingCheck2.json();
   const stillInPending = pendingData2.data.some((p: any) => p.plan_id === planId1 || p.approval_id === appId1);
   console.log(`Plan removed from Pending Approvals: ${!stillInPending}`);
   if (stillInPending) throw new Error('Test 1 failed: Approved plan still returned in pending approvals!');
@@ -165,7 +165,7 @@ async function main() {
     headers: authHeaders,
     body: JSON.stringify({ action: 'APPROVE', comments: 'Authorized from Command Review' }),
   });
-  const cmdApproveJson = await cmdApproveRes.json();
+  const cmdApproveJson: any = await cmdApproveRes.json();
   console.log('Command approve response:', cmdApproveJson);
   if (!cmdApproveJson.success) throw new Error('Test 2 failed: Command approval endpoint failed: ' + JSON.stringify(cmdApproveJson));
 
@@ -188,7 +188,7 @@ async function main() {
 
   // Verify Pending Approvals no longer lists it
   const pendingCheckT2 = await fetch(`${API_BASE}/approvals/pending`, { headers: authHeaders });
-  const pendingDataT2 = await pendingCheckT2.json();
+  const pendingDataT2: any = await pendingCheckT2.json();
   const foundT2InPending = pendingDataT2.data.some((p: any) => p.plan_id === planId2 || p.approval_id === appId2);
   console.log(`Plan 2 removed from Pending Approvals: ${!foundT2InPending}`);
   if (foundT2InPending) throw new Error('Test 2 failed: Approved plan still returned in pending approvals!');
@@ -206,7 +206,7 @@ async function main() {
     headers: authHeaders,
     body: JSON.stringify({ action: 'APPROVE', comments: 'Attempted duplicate approval' }),
   });
-  const dupCmdJson = await dupCmdRes.json();
+  const dupCmdJson: any = await dupCmdRes.json();
   console.log('Duplicate approval response (command API):', dupCmdJson);
   if (!dupCmdJson.success) throw new Error('Test 3: Idempotent return should indicate success=true');
 
@@ -216,7 +216,7 @@ async function main() {
     headers: authHeaders,
     body: JSON.stringify({}),
   });
-  const dupAppJson = await dupAppRes.json();
+  const dupAppJson: any = await dupAppRes.json();
   console.log('Duplicate approval response (approvals API):', dupAppJson);
   if (!dupAppJson.success) throw new Error('Test 3: Idempotent return on approvals API should indicate success=true');
 
@@ -268,7 +268,7 @@ async function main() {
     headers: authHeaders,
     body: JSON.stringify({ action: 'APPROVE' }),
   });
-  const shortageJson = await shortageRes.json();
+  const shortageJson: any = await shortageRes.json();
   console.log('Resource shortage response:', shortageJson);
 
   // Restore responder statuses

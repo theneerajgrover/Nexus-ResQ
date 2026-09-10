@@ -43,6 +43,21 @@ export const incidentsApi = {
   getAll: () => apiClient.get('/incidents'),
   getById: (id: string) => apiClient.get(`/incidents/${id}`),
   getHistory: (id: string) => apiClient.get(`/incidents/${id}/history`),
+  getReports: (id: string) => apiClient.get(`/incidents/${id}/reports`),
+  getAgentResults: (id: string) => apiClient.get(`/incidents/${id}/agent-results`),
+  report: (data: {
+    disaster_type: string;
+    location: string;
+    latitude?: number | null;
+    longitude?: number | null;
+    severity?: string;
+    description?: string;
+    affected_people?: number;
+    source?: string;
+    reporter_name?: string;
+    reporter_phone?: string;
+    media_url?: string;
+  }) => apiClient.post('/incidents/report', data),
   create: (data: any) => apiClient.post('/incidents', data),
   update: (id: string, data: any) => apiClient.patch(`/incidents/${id}`, data),
 };

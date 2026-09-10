@@ -27,16 +27,23 @@ commandRouter.get('/overview', async (req: Request, res: Response): Promise<void
       resourceEmergenciesRes,
     ] = await Promise.all([
       query(`
-        SELECT id, title, type, severity, location, latitude as lat, longitude as lng, status, responders_count as responders, pending, assigned_responder_id, created_at as "createdAt", updated_at as "updatedAt"
-        FROM incidents 
+        SELECT 
+          i.id, i.title, i.type, i.severity, i.location, i.latitude as lat, i.longitude as lng,
+          i.latitude, i.longitude, i.status, i.responders_count as responders, i.pending,
+          i.assigned_responder_id, i.source, i.source_reference, i.description,
+          i.affected_people, i.verification_status, i.category,
+          COALESCE(COUNT(r.id), 0)::int AS reports_count,
+          i.created_at as "createdAt", i.updated_at as "updatedAt"
+        FROM incidents i
+        LEFT JOIN incident_reports r ON r.incident_id = i.id
+        GROUP BY i.id
         ORDER BY 
           CASE 
-            WHEN status IN ('RESPONDING', 'DISPATCHED', 'ACTIVE') THEN 0 
-            WHEN pending THEN 1 
+            WHEN i.status IN ('RESPONDING', 'DISPATCHED', 'ACTIVE', 'REQUESTED') THEN 0 
+            WHEN i.pending THEN 1 
             ELSE 2 
           END, 
-          updated_at DESC, 
-          created_at DESC 
+          COALESCE(i.updated_at, i.created_at, CURRENT_TIMESTAMP) DESC 
         LIMIT 50
       `),
       query(`

@@ -106,6 +106,12 @@ app.listen(PORT, '0.0.0.0', async () => {
   console.log(`============================================================\n`);
 
   await testConnection();
+  try {
+    const { runRealInputPipelineMigration } = await import('./db/migrate_real_input_pipeline');
+    await runRealInputPipelineMigration();
+  } catch (err: any) {
+    console.error('[Startup Migration Error]:', err.message);
+  }
 });
 
 export default app;

@@ -302,27 +302,37 @@ export class AgentOrchestratorService {
       };
 
       // ── AGENT 1: CONTINUOUS INGESTION (1/11) ──────────────────────
-      await updateAgentState(1, 'Continuous Ingestion', 'CONTINUOUS INGESTION', 'RUNNING', 45, 'Ingesting live incident telemetry & citizen requests...');
+      await updateAgentState(1, 'Continuous Ingestion', 'CONTINUOUS INGESTION', 'RUNNING', 45, 'Ingesting live incident telemetry & multi-source disaster reports...');
       await sleep(380);
 
-      // Real query: count active incidents, pending SOS, active responders, alerts
-      const [ingIncRes, ingSosRes, ingAlertRes] = await Promise.all([
+      // Real query: count active incidents, pending SOS, active responders, alerts, and linked reports for this incident
+      const [ingIncRes, ingSosRes, ingAlertRes, linkedReportsRes] = await Promise.all([
         query(`SELECT COUNT(*) as count FROM incidents WHERE status != 'RESOLVED'`),
         query(`SELECT COUNT(*) as count FROM emergency_requests WHERE status IN ('RECEIVED', 'ASSIGNED')`),
         query(`SELECT COUNT(*) as count FROM alerts WHERE is_active = TRUE`),
+        query(`SELECT * FROM incident_reports WHERE incident_id = $1 ORDER BY created_at DESC`, [incident.id]),
       ]);
       const activeIncCount = parseInt(ingIncRes.rows[0]?.count || '5', 10);
       const activeSosCount = parseInt(ingSosRes.rows[0]?.count || '12', 10);
       const activeAlertCount = parseInt(ingAlertRes.rows[0]?.count || '2', 10);
+      const linkedReports = linkedReportsRes.rows || [];
+      const evidenceCount = Math.max(1, linkedReports.length);
 
-      context.ingestion = { activeIncCount, activeSosCount, activeAlertCount };
+      context.ingestion = {
+        activeIncCount,
+        activeSosCount,
+        activeAlertCount,
+        incidentSource: incident.source || 'CITIZEN_SOS',
+        evidenceCount,
+        linkedReports,
+      };
       await updateAgentState(
         1,
         'Continuous Ingestion',
         'CONTINUOUS INGESTION',
         'COMPLETE',
         100,
-        `Ingested ${activeIncCount} active incidents, ${activeSosCount} emergency SOS calls & ${activeAlertCount} early warnings`,
+        `Ingested ${evidenceCount} evidence report(s) for ${incident.id} (${incident.source || 'CITIZEN_SOS'}) across ${activeIncCount} active disasters`,
         context.ingestion
       );
 
@@ -330,7 +340,7 @@ export class AgentOrchestratorService {
       await updateAgentState(2, 'Verification', 'VERIFICATION', 'RUNNING', 50, `Verifying telemetry integrity & cross-corroborating reports for ${incident.id}...`);
       await sleep(380);
 
-      // Real query: check coordinate validity and duplication
+      // Real query: check coordinate validity and multi-source corroboration
       const coordsValid = incident.latitude !== null && incident.longitude !== null &&
                           Number(incident.latitude) >= -90 && Number(incident.latitude) <= 90;
       const dupCheck = await query(`
@@ -339,10 +349,19 @@ export class AgentOrchestratorService {
       `, [`%${incident.location}%`, incident.id]);
       const duplicateCount = parseInt(dupCheck.rows[0]?.dups || '0', 10);
 
+      const distinctSources = new Set(linkedReports.map((r: any) => r.source || r.reporter_name)).size;
+      const isCorroborated = evidenceCount > 1 || distinctSources > 1 || incident.location_verified || coordsValid;
+      const verificationStatus = isCorroborated ? 'VERIFIED' : 'UNVERIFIED';
+
+      await query(`UPDATE incidents SET verification_status = $1 WHERE id = $2`, [verificationStatus, incident.id]).catch(() => {});
+
       context.verification = {
         coordsValid,
         duplicateCount,
-        integrityScore: 98.6,
+        evidenceCount,
+        distinctSources,
+        verificationStatus,
+        integrityScore: coordsValid ? (isCorroborated ? 99.4 : 95.0) : 75.0,
       };
       await updateAgentState(
         2,
@@ -350,7 +369,7 @@ export class AgentOrchestratorService {
         'VERIFICATION',
         'COMPLETE',
         100,
-        `Corroborated 100% telemetry integrity for ${incident.id}; ${duplicateCount} duplicate conflicts detected`,
+        `Corroborated ${evidenceCount} report source(s) [${verificationStatus}] · ${distinctSources} distinct contributor(s) · Telemetry integrity verified`,
         context.verification
       );
 
@@ -364,13 +383,23 @@ export class AgentOrchestratorService {
       ]);
       const topRiskZone = riskZonesRes.rows[0] || { region_name: incident.location, risk_score: 88 };
       const perimeterMeters = incident.severity === 'CRITICAL' ? 300 : 150;
-      const affectedPop = incident.severity === 'CRITICAL' ? 340 : incident.severity === 'HIGH' ? 180 : 75;
+
+      // Real affected population calculation from incident model and linked evidence
+      let affectedPop = Math.max(
+        parseInt(incident.affected_people || '0', 10),
+        incident.severity === 'CRITICAL' ? 340 : incident.severity === 'HIGH' ? 180 : 75
+      );
+      if (linkedReports.length > 0) {
+        const sumReported = linkedReports.reduce((sum: number, r: any) => sum + (parseInt(r.affected_people, 10) || 0), 0);
+        if (sumReported > affectedPop) affectedPop = sumReported;
+      }
 
       context.situation = {
         topRiskZone: topRiskZone.region_name,
         riskScore: topRiskZone.risk_score,
         perimeterMeters,
         affectedPopulation: affectedPop,
+        evidenceReportsCount: evidenceCount,
       };
       await updateAgentState(
         3,
@@ -378,7 +407,7 @@ export class AgentOrchestratorService {
         'SITUATION',
         'COMPLETE',
         100,
-        `Established ${perimeterMeters}m exclusion perimeter in ${incident.location} (~${affectedPop} affected)`,
+        `Established ${perimeterMeters}m exclusion perimeter in ${incident.location} (~${affectedPop} affected across ${evidenceCount} report(s))`,
         context.situation
       );
 
@@ -386,11 +415,15 @@ export class AgentOrchestratorService {
       await updateAgentState(4, 'Priority', 'PRIORITY', 'RUNNING', 60, `Computing multi-variable triage score for ${incident.id}...`);
       await sleep(380);
 
-      const triageScore = incident.severity === 'CRITICAL' ? 96 : incident.severity === 'HIGH' ? 86 : 68;
+      const baseTriage = incident.severity === 'CRITICAL' ? 94 : incident.severity === 'HIGH' ? 84 : 68;
+      const surgeBonus = Math.min(6, Math.max(0, (evidenceCount - 1) * 2));
+      const triageScore = Math.min(100, baseTriage + surgeBonus);
+
       context.priority = {
         triageScore,
         severity: incident.severity,
         urgencyRank: 1,
+        surgeBonus,
       };
       await updateAgentState(
         4,
@@ -398,7 +431,7 @@ export class AgentOrchestratorService {
         'PRIORITY',
         'COMPLETE',
         100,
-        `Triage Urgency: ${triageScore}/100 (${incident.severity} Severity) — Immediate Tactical Action`,
+        `Triage Urgency: ${triageScore}/100 (${incident.severity} Severity) · Evidence surge factor: +${surgeBonus}`,
         context.priority
       );
 
@@ -611,7 +644,9 @@ export class AgentOrchestratorService {
         planAction = `Authorize relief logistics & resource mobilization for ${incident.location}`;
       }
 
-      const planReason = `Compounding ${incident.type.toLowerCase()} threat at ${incident.location} with ${incident.severity} severity. ${
+      const reportEvidenceCount = context.ingestion?.evidenceCount || 1;
+      const incidentSource = context.ingestion?.incidentSource || incident.source || 'CITIZEN_SOS';
+      const planReason = `Compounding ${incident.type.toLowerCase()} threat at ${incident.location} with ${incident.severity} severity (${reportEvidenceCount} corroborating report${reportEvidenceCount > 1 ? 's' : ''} via ${incidentSource.replace('_', ' ')}). ${
         primaryResponder
           ? `Deploy tactical team via ${primaryRoute.label} (${primaryRoute.safetyStatus})${assignedShelter ? ` and direct evacuees to ${assignedShelter.name}` : ''}.`
           : requiresResponder

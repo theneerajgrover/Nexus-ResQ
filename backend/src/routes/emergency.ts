@@ -163,6 +163,7 @@ emergencyRouter.post('/request', optionalAuth, async (req: Request, res: Respons
       ? effectiveType
       : 'OTHER';
 
+    const affectedPeopleCount = Math.max(1, parseInt(req.body.affected_people || req.body.affectedPeople || '1', 10) || 1);
     let savedRequest: any;
     const client = await getClient();
     try {
@@ -230,14 +231,19 @@ emergencyRouter.post('/request', optionalAuth, async (req: Request, res: Respons
       await client.query(
         `INSERT INTO incidents (
           id, title, type, severity, location, latitude, longitude, status, responders_count, pending, request_id,
-          place_id, formatted_address, village, locality, city, district, state, postal_code, country, location_source, location_verified
+          place_id, formatted_address, village, locality, city, district, state, postal_code, country, location_source, location_verified,
+          source, source_reference, description, affected_people, verification_status, category, created_at, updated_at
         )
-        VALUES ($1, $2, $3, 'HIGH', $4, $5, $6, 'REQUESTED', 0, TRUE, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+        VALUES ($1, $2, $3, 'HIGH', $4, $5, $6, 'ACTIVE', 0, TRUE, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, 'CITIZEN_SOS', $7, $19, $20, 'VERIFYING', $3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         ON CONFLICT (id) DO UPDATE SET 
           request_id = $7,
           latitude = EXCLUDED.latitude,
           longitude = EXCLUDED.longitude,
-          location = EXCLUDED.location`,
+          location = EXCLUDED.location,
+          source = 'CITIZEN_SOS',
+          description = EXCLUDED.description,
+          affected_people = EXCLUDED.affected_people,
+          updated_at = CURRENT_TIMESTAMP`,
         [
           incId,
           `Citizen SOS: ${effectiveType} (${assistanceArray.join(', ')})`,
@@ -257,6 +263,30 @@ emergencyRouter.post('/request', optionalAuth, async (req: Request, res: Respons
           country,
           locationSource,
           locationVerified,
+          effectiveDetails,
+          affectedPeopleCount,
+        ]
+      );
+
+      // 6b. Record in common incident_reports table for multi-source disaster correlation
+      await client.query(
+        `INSERT INTO incident_reports (
+          id, incident_id, source, user_id, reporter_name, reporter_phone, reporter_role,
+          disaster_type, severity, description, location, latitude, longitude, affected_people, status
+        )
+        VALUES ($1, $2, 'CITIZEN_SOS', $3, $4, $5, 'citizen', $6, 'HIGH', $7, $8, $9, $10, $11, 'SUBMITTED')`,
+        [
+          sosId,
+          incId,
+          userId,
+          effectiveName,
+          effectivePhone,
+          incidentType,
+          effectiveDetails,
+          effectiveLocation,
+          incidentLat,
+          incidentLon,
+          affectedPeopleCount,
         ]
       );
 
@@ -269,7 +299,7 @@ emergencyRouter.post('/request', optionalAuth, async (req: Request, res: Respons
           sosId,
           incId,
           effectiveName,
-          `Citizen emergency registered at ${effectiveLocation} (Verified: ${locationVerified ? 'YES' : 'PENDING_CONFIRMATION'}).`,
+          `Citizen SOS emergency registered at ${effectiveLocation} (Verified: ${locationVerified ? 'YES' : 'PENDING_CONFIRMATION'}).`,
         ]
       );
 
@@ -333,6 +363,30 @@ emergencyRouter.post('/request', optionalAuth, async (req: Request, res: Respons
       assistance: assistanceArray,
       status: 'REQUESTED',
       pending: true,
+      timestamp: Date.now(),
+    });
+    broadcastEvent('INCIDENT_CREATED', {
+      id: incId,
+      title: `Citizen SOS: ${effectiveType} (${assistanceArray.join(', ')})`,
+      type: incidentType,
+      severity: 'HIGH',
+      location: effectiveLocation,
+      lat: incidentLat,
+      lng: incidentLon,
+      source: 'CITIZEN_SOS',
+      description: effectiveDetails,
+      affected_people: affectedPeopleCount,
+      verification_status: 'VERIFYING',
+      pending: true,
+      timestamp: Date.now(),
+    });
+    broadcastEvent('INCIDENT_REPORT_SUBMITTED', {
+      reportId: sosId,
+      incidentId: incId,
+      source: 'CITIZEN_SOS',
+      disasterType: incidentType,
+      location: effectiveLocation,
+      severity: 'HIGH',
       timestamp: Date.now(),
     });
     broadcastEvent('NOTIFICATION_CREATED', {

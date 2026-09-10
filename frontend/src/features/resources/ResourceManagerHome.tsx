@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useLocation } from 'react-router';
 import { resourcesApi, sheltersApi } from '../../api';
+import ReportIncidentModal from '../../components/incident/ReportIncidentModal';
 
 type Section = 'overview' | 'shelters' | 'supplies' | 'ambulances' | 'equipment' | 'dispatches';
 
@@ -831,6 +832,7 @@ export default function ResourceManagerHome() {
   const [dispatchList, setDispatchList] = useState<any[]>([]);
   const [emergencyStatus, setEmergencyStatus] = useState<any>(null);
   const [showDeclareModal, setShowDeclareModal] = useState(false);
+  const [showReportModal, setShowReportModal] = useState(false);
   const [restoring, setRestoring] = useState(false);
 
   const refreshShelters = () => sheltersApi.getAll().then((r) => r.data && setShelterList(r.data)).catch(() => {});
@@ -917,6 +919,17 @@ export default function ResourceManagerHome() {
 
         {/* Header Action Buttons */}
         <div className="ml-auto flex items-center gap-3">
+          <motion.button
+            onClick={() => setShowReportModal(true)}
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            className="font-condensed font-bold text-xs px-4 py-1.5 rounded-lg flex items-center gap-2 cursor-pointer"
+            style={{ background: 'rgba(6,182,212,0.15)', color: '#06b6d4', border: '1px solid rgba(6,182,212,0.4)' }}
+          >
+            <span>📢</span>
+            REPORT INCIDENT
+          </motion.button>
+
           {emergencyStatus?.isAffected ? (
             <motion.button
               onClick={handleRestoreStatus}
@@ -983,6 +996,12 @@ export default function ResourceManagerHome() {
           />
         )}
       </AnimatePresence>
+
+      <ReportIncidentModal
+        isOpen={showReportModal}
+        onClose={() => setShowReportModal(false)}
+        sourceContext="PORTAL_REPORT"
+      />
     </div>
   );
 }

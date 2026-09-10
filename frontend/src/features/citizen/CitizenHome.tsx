@@ -4,6 +4,7 @@ import { motion } from 'framer-motion';
 import { alertsApi, sheltersApi, incidentsApi } from '../../api';
 import OperationalMap, { type MapMarker } from '../../components/map/OperationalMap';
 import { useDeviceLocation } from '../../hooks/useDeviceLocation';
+import ReportIncidentModal from '../../components/incident/ReportIncidentModal';
 
 type RiskLevel = 'LOW' | 'MODERATE' | 'HIGH' | 'CRITICAL';
 const riskColors: Record<RiskLevel, string> = { LOW: '#10b981', MODERATE: '#f59e0b', HIGH: '#f97316', CRITICAL: '#dc2626' };
@@ -22,6 +23,7 @@ export default function CitizenHome() {
   const [incidents, setIncidents] = useState<any[]>([]);
   const [lastSync, setLastSync] = useState<Date>(new Date());
   const [syncSecondsAgo, setSyncSecondsAgo] = useState<number>(0);
+  const [showReportModal, setShowReportModal] = useState<boolean>(false);
 
   // Automatic high-accuracy device GPS acquisition and backend sync
   const {
@@ -255,19 +257,20 @@ export default function CitizenHome() {
         {/* Quick actions */}
         <div className="px-6 py-4 flex flex-col gap-2 flex-1 overflow-y-auto">
           {[
+            { label: 'REPORT INCIDENT', icon: '📢', action: () => setShowReportModal(true), color: '#ef4444', desc: 'Report disaster, hazards, or casualties' },
             { label: 'VIEW ALERTS', icon: '⚠', path: '/citizen/alerts', color: '#f59e0b', desc: activeAlertCount > 0 ? `${activeAlertCount} active alert${activeAlertCount > 1 ? 's' : ''} in your area` : 'No active alerts in your area' },
             { label: 'FIND SHELTER', icon: '⊕', path: '/citizen/shelters', color: '#10b981', desc: 'Shelter facilities in your area' },
             { label: 'SAFE ROUTES', icon: '→', path: '/citizen/routes', color: '#06b6d4', desc: 'Evacuation corridors & status' },
             { label: 'LIVE WEATHER', icon: '⚡', path: '/citizen/weather', color: '#38bdf8', desc: 'Device GPS weather & 5-day forecast' },
             { label: 'MY HISTORY', icon: '⟳', path: '/citizen/history', color: '#a855f7', desc: 'Past emergency requests & status' },
-          ].map((a, i) => (
+          ].map((a: any, i) => (
             <motion.button
-              key={a.path}
-              onClick={() => navigate(a.path)}
+              key={a.label}
+              onClick={() => a.action ? a.action() : navigate(a.path)}
               initial={{ opacity: 0, x: 20 }}
               animate={{ opacity: 1, x: 0 }}
               transition={{ delay: 0.2 + i * 0.08 }}
-              className="flex items-center gap-4 p-4 rounded-xl text-left transition-all duration-200 group"
+              className="flex items-center gap-4 p-4 rounded-xl text-left transition-all duration-200 group cursor-pointer"
               style={{ background: `${a.color}08`, border: `1px solid ${a.color}20` }}
               whileHover={{ scale: 1.01, borderColor: `${a.color}44` }}
               whileTap={{ scale: 0.99 }}
@@ -292,6 +295,15 @@ export default function CitizenHome() {
           <div className="font-mono text-xs text-white/25 text-center">Emergency services: <span className="text-white/50">911</span></div>
         </div>
       </motion.div>
+
+      {/* Real-Input Incident Reporting Modal */}
+      <ReportIncidentModal
+        isOpen={showReportModal}
+        onClose={() => setShowReportModal(false)}
+        onSuccess={() => loadData()}
+        defaultCoords={gpsCoords}
+        sourceContext="CITIZEN_REPORT"
+      />
     </div>
   );
 }

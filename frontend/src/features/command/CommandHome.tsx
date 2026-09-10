@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useLocation } from 'react-router';
 import { commandApi, respondersApi, predictiveApi, orchestratorApi, incidentsApi, routesApi } from '../../api';
 import OperationalMap, { MapMarker } from '../../components/map/OperationalMap';
+import ReportIncidentModal from '../../components/incident/ReportIncidentModal';
 
 // Authority / Command merges: Dispatcher (ResQ Sphere, incident assignment, dispatch)
 // + Authority (regional intelligence, AI analysis, evacuation approval)
@@ -1025,13 +1026,37 @@ function HomeTab({
           <div className="overflow-y-auto h-full pb-10">
             {sortIncidents(currentIncidents).map((inc: any) => {
               const color = severityColors[inc.severity] || '#06b6d4';
+              const sourceTag = inc.source === 'CITIZEN_SOS'
+                ? { label: 'CITIZEN SOS', bg: 'rgba(239,68,68,0.15)', text: '#ef4444' }
+                : inc.source === 'CITIZEN_REPORT'
+                ? { label: 'CITIZEN REPORT', bg: 'rgba(245,158,11,0.15)', text: '#f59e0b' }
+                : inc.source === 'PORTAL_REPORT'
+                ? { label: 'PORTAL REPORT', bg: 'rgba(6,182,212,0.15)', text: '#06b6d4' }
+                : inc.source === 'AUTHORITY_REPORT'
+                ? { label: 'AUTHORITY', bg: 'rgba(168,85,247,0.15)', text: '#a855f7' }
+                : null;
               return (
                 <div key={inc.id} className="flex items-center gap-3 px-4 py-3"
                   style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
                   <div className="w-2 h-2 rounded-full shrink-0" style={{ background: color }} />
                   <div className="flex-1 min-w-0">
-                    <div className="font-condensed font-bold text-xs text-white">{inc.type}</div>
-                    <div className="font-mono text-xs text-white/30">{inc.id} · {inc.responders || inc.responders_count || 0} units</div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-condensed font-bold text-xs text-white">{inc.type}</span>
+                      {sourceTag && (
+                        <span className="font-mono text-[9px] px-1.5 py-0.5 rounded font-bold tracking-wider"
+                          style={{ background: sourceTag.bg, color: sourceTag.text }}>
+                          {sourceTag.label}
+                        </span>
+                      )}
+                      {inc.reports_count > 1 && (
+                        <span className="font-mono text-[9px] text-white/40">
+                          ({inc.reports_count} reports)
+                        </span>
+                      )}
+                    </div>
+                    <div className="font-mono text-xs text-white/30 truncate">
+                      {inc.id} · {inc.location || 'Tactical Grid'} · {inc.responders || inc.responders_count || 0} units
+                    </div>
                   </div>
                   <div className="font-mono text-xs shrink-0" style={{ color }}>{inc.severity}</div>
                   {inc.pending && <div className="w-1.5 h-1.5 rounded-full shrink-0 live-dot" style={{ background: '#f59e0b' }} />}
@@ -2313,28 +2338,121 @@ function OperationsTab({ respondersList }: { respondersList?: any[] }) {
 }
 
 // ── Incidents tab ─────────────────────────────────────────────────────────────
-function IncidentsTab({ incidentsList, historyList }: { incidentsList?: any[]; historyList?: any[] }) {
+const PIPELINE_AGENTS_SCHEMA = [
+  { id: 1, name: 'Continuous Ingestion', layer: 'Sequential', desc: 'Multi-source ingestion & normalization' },
+  { id: 2, name: 'Verification', layer: 'Sequential', desc: 'Credibility, deduplication & conflict checks' },
+  { id: 3, name: 'Situation Assessment', layer: 'Sequential', desc: 'Operational picture consolidation' },
+  { id: 4, name: 'Priority & Triage', layer: 'Sequential', desc: 'Incident triage & severity scoring' },
+  { id: 5, name: 'Resource Allocation', layer: 'Parallel', desc: 'Asset availability & suitability mapping' },
+  { id: 6, name: 'Capacity Projection', layer: 'Parallel', desc: 'Hospital & shelter capacity projection' },
+  { id: 7, name: 'Route Optimization', layer: 'Parallel', desc: 'Safe corridor & accessibility evaluation' },
+  { id: 8, name: 'Forecast & Escalation', layer: 'Parallel', desc: 'Demand & escalation forecasting' },
+  { id: 9, name: 'Coordinator', layer: 'Sequential', desc: 'Response plan synthesis & action coordination' },
+  { id: 10, name: 'Critic & Safety Check', layer: 'Sequential', desc: 'Plan review, risk identification & validation' },
+  { id: 11, name: 'Continuous Analytics', layer: 'Continuous', desc: 'Outcome tracking & performance analysis' },
+];
+
+function IncidentsTab({
+  incidentsList,
+  historyList,
+  onRefresh,
+}: {
+  incidentsList?: any[];
+  historyList?: any[];
+  onRefresh?: () => void;
+}) {
   const currentIncidents = incidentsList || [];
   const currentHistory = historyList || [];
   const [selected, setSelected] = useState<string | null>(() => sortIncidents(currentIncidents)[0]?.id ?? null);
+  const [showReportModal, setShowReportModal] = useState<boolean>(false);
+  const [correlatedReports, setCorrelatedReports] = useState<any[]>([]);
+  const [agentResults, setAgentResults] = useState<any>(null);
+  const [loadingReports, setLoadingReports] = useState<boolean>(false);
+  const [loadingAgents, setLoadingAgents] = useState<boolean>(false);
+
   const selectedInc = currentIncidents.find((i: any) => i.id === selected);
 
   const selectedHistory = selectedInc
     ? currentHistory.filter((h: any) => h.incident_id === selectedInc.id)
     : [];
 
+  // Fetch reports & agent results whenever selected incident changes
+  useEffect(() => {
+    if (!selectedInc?.id) {
+      setCorrelatedReports([]);
+      setAgentResults(null);
+      return;
+    }
+
+    setLoadingReports(true);
+    incidentsApi.getReports(selectedInc.id)
+      .then((res: any) => {
+        const list = res.data?.data || res.data || [];
+        setCorrelatedReports(Array.isArray(list) ? list : []);
+      })
+      .catch((err: any) => {
+        console.warn('Failed to load incident reports:', err);
+        setCorrelatedReports([]);
+      })
+      .finally(() => setLoadingReports(false));
+
+    setLoadingAgents(true);
+    incidentsApi.getAgentResults(selectedInc.id)
+      .then((res: any) => {
+        const data = res.data?.data || res.data || null;
+        setAgentResults(data);
+      })
+      .catch((err: any) => {
+        console.warn('Failed to load incident agent results:', err);
+        setAgentResults(null);
+      })
+      .finally(() => setLoadingAgents(false));
+  }, [selectedInc?.id]);
+
+  const handleReportSuccess = () => {
+    setShowReportModal(false);
+    onRefresh?.();
+  };
+
   return (
     <div className="h-full flex gap-5 overflow-hidden">
       {/* Incident list */}
       <div className="w-80 shrink-0 flex flex-col gap-3 overflow-y-auto">
-        <div className="font-mono text-xs tracking-widest text-white/30">
-          INCIDENT LOG — {currentIncidents.length} RECORDS
+        <div className="flex items-center justify-between px-1">
+          <div className="font-mono text-xs tracking-widest text-white/30">
+            INCIDENT LOG — {currentIncidents.length} RECORDS
+          </div>
+          <motion.button
+            onClick={() => setShowReportModal(true)}
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            className="font-condensed font-bold text-xs px-2.5 py-1 rounded-lg flex items-center gap-1.5 cursor-pointer"
+            style={{
+              background: 'rgba(168,85,247,0.18)',
+              color: '#c084fc',
+              border: '1px solid rgba(168,85,247,0.4)',
+            }}
+          >
+            <span>+</span>
+            <span>REPORT INCIDENT</span>
+          </motion.button>
         </div>
+
         {sortIncidents(currentIncidents).map((inc: any) => {
           const color = severityColors[inc.severity] || '#06b6d4';
           const isSelected = selected === inc.id;
           const isDispatched = inc.status === 'RESPONDING' || inc.status === 'DISPATCHED' || inc.status === 'ASSIGNED';
           const isPending = inc.pending || inc.status === 'PENDING';
+          const sourceTag = inc.source === 'CITIZEN_SOS'
+            ? { label: 'CITIZEN SOS', bg: 'rgba(239,68,68,0.15)', text: '#ef4444' }
+            : inc.source === 'CITIZEN_REPORT'
+            ? { label: 'CITIZEN REPORT', bg: 'rgba(245,158,11,0.15)', text: '#f59e0b' }
+            : inc.source === 'PORTAL_REPORT'
+            ? { label: 'PORTAL REPORT', bg: 'rgba(6,182,212,0.15)', text: '#06b6d4' }
+            : inc.source === 'AUTHORITY_REPORT'
+            ? { label: 'AUTHORITY', bg: 'rgba(168,85,247,0.15)', text: '#a855f7' }
+            : null;
+
           return (
             <motion.button key={inc.id}
               onClick={() => setSelected(isSelected ? null : inc.id)}
@@ -2344,12 +2462,18 @@ function IncidentsTab({ incidentsList, historyList }: { incidentsList?: any[]; h
                 border: `1px solid ${isSelected ? color + '44' : 'rgba(255,255,255,0.05)'}`,
               }}
               whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.99 }}>
-              <div className="flex items-center gap-3 mb-2">
+              <div className="flex items-center gap-2 mb-2 flex-wrap">
                 <div className="w-2 h-2 rounded-full shrink-0" style={{ background: color }} />
-                <div className="font-mono text-xs px-2 py-0.5 rounded"
+                <div className="font-mono text-xs px-2 py-0.5 rounded font-bold"
                   style={{ background: `${color}15`, color }}>{inc.severity}</div>
+                {sourceTag && (
+                  <span className="font-mono text-[9px] px-1.5 py-0.5 rounded font-bold tracking-wider"
+                    style={{ background: sourceTag.bg, color: sourceTag.text }}>
+                    {sourceTag.label}
+                  </span>
+                )}
                 {isPending && (
-                  <div className="font-mono text-xs ml-auto" style={{ color: '#f59e0b' }}>PENDING APPROVAL</div>
+                  <div className="font-mono text-xs ml-auto" style={{ color: '#f59e0b' }}>PENDING</div>
                 )}
                 {isDispatched && (
                   <div className="font-mono text-xs ml-auto" style={{ color: '#10b981' }}>✓ DISPATCHED</div>
@@ -2365,7 +2489,19 @@ function IncidentsTab({ incidentsList, historyList }: { incidentsList?: any[]; h
                   {inc.status}
                 </div>
               </div>
-              <div className="font-mono text-xs text-white/25 mt-1">{inc.responders || inc.responders_count || 0} units assigned</div>
+              <div className="flex items-center justify-between font-mono text-[10px] text-white/30 mt-1.5 pt-1.5 border-t border-white/[0.03]">
+                <span>{inc.responders || inc.responders_count || 0} units assigned</span>
+                {inc.verification_status === 'VERIFIED' ? (
+                  <span className="text-emerald-400 font-semibold">✓ VERIFIED</span>
+                ) : (
+                  <span className="text-white/30">UNVERIFIED</span>
+                )}
+              </div>
+              {inc.reports_count > 1 && (
+                <div className="font-mono text-[9px] text-cyan-400/80 mt-1">
+                  🔗 {inc.reports_count} reports linked
+                </div>
+              )}
             </motion.button>
           );
         })}
@@ -2376,12 +2512,29 @@ function IncidentsTab({ incidentsList, historyList }: { incidentsList?: any[]; h
         <AnimatePresence mode="wait">
           {selectedInc ? (
             <motion.div key={selectedInc.id} initial={{ opacity: 0, x: 12 }} animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0 }} className="h-full flex flex-col gap-4">
+              exit={{ opacity: 0 }} className="flex flex-col gap-4 pb-8">
+              {/* Incident Header */}
               <div className="flex items-start justify-between">
                 <div>
-                  <div className="font-mono text-xs tracking-widest mb-1"
-                    style={{ color: severityColors[selectedInc.severity] || '#06b6d4' }}>
-                    {selectedInc.severity} INCIDENT
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="font-mono text-xs tracking-widest"
+                      style={{ color: severityColors[selectedInc.severity] || '#06b6d4' }}>
+                      {selectedInc.severity} INCIDENT
+                    </span>
+                    {selectedInc.source && (
+                      <span className="font-mono text-[10px] px-2 py-0.5 rounded bg-white/10 text-white/80 font-bold">
+                        SOURCE: {selectedInc.source}
+                      </span>
+                    )}
+                    {selectedInc.verification_status === 'VERIFIED' ? (
+                      <span className="font-mono text-[10px] px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-bold">
+                        ✓ VERIFIED
+                      </span>
+                    ) : (
+                      <span className="font-mono text-[10px] px-2 py-0.5 rounded bg-white/5 text-white/40 border border-white/10 font-bold">
+                        UNVERIFIED
+                      </span>
+                    )}
                   </div>
                   <div className="font-condensed font-black text-3xl text-white">{selectedInc.id}</div>
                   <div className="font-condensed font-bold text-lg mt-0.5"
@@ -2397,10 +2550,21 @@ function IncidentsTab({ incidentsList, historyList }: { incidentsList?: any[]; h
                 </div>
               </div>
 
-              <div className="grid grid-cols-3 gap-3">
+              {/* Description summary */}
+              {selectedInc.description && (
+                <div className="p-4 rounded-xl font-mono text-xs text-white/80 leading-relaxed"
+                  style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                  <div className="text-white/40 text-[10px] tracking-wider mb-1 font-bold">INCIDENT DESCRIPTION & SUMMARY</div>
+                  {selectedInc.description}
+                </div>
+              )}
+
+              {/* KPI Cards */}
+              <div className="grid grid-cols-4 gap-3">
                 {[
                   { label: 'UNITS ASSIGNED', value: (selectedInc.responders || selectedInc.responders_count || 0).toString(), color: '#10b981' },
-                  { label: 'OPERATIONAL STATE', value: selectedInc.status, color: selectedInc.status === 'RESPONDING' ? '#10b981' : selectedInc.pending ? '#f59e0b' : '#06b6d4' },
+                  { label: 'AFFECTED PEOPLE', value: (selectedInc.affected_people || 0).toString(), color: '#f59e0b' },
+                  { label: 'VERIFICATION', value: selectedInc.verification_status || 'UNVERIFIED', color: selectedInc.verification_status === 'VERIFIED' ? '#10b981' : '#a855f7' },
                   { label: 'DISPATCH STATUS', value: (selectedInc.status === 'RESPONDING' || selectedInc.status === 'DISPATCHED') ? 'DISPATCHED' : selectedInc.pending ? 'AWAITING APPROVAL' : 'ACTIVE', color: (selectedInc.status === 'RESPONDING' || selectedInc.status === 'DISPATCHED') ? '#10b981' : selectedInc.pending ? '#f59e0b' : '#06b6d4' },
                 ].map((item) => (
                   <div key={item.label} className="p-4 rounded-xl text-center"
@@ -2411,10 +2575,11 @@ function IncidentsTab({ incidentsList, historyList }: { incidentsList?: any[]; h
                 ))}
               </div>
 
+              {/* Location & Scene */}
               <div className="p-4 rounded-xl" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
                 <div className="font-mono text-xs tracking-widest text-white/30 mb-2">INCIDENT LOCATION & SCENE</div>
                 <div className="font-mono text-xs text-white/70 leading-relaxed">
-                  {selectedInc.location || 'Designated Tactical Sector'} · Lat: {selectedInc.lat || '0'} · Lng: {selectedInc.lng || '0'}
+                  {selectedInc.location || 'Designated Tactical Sector'} · Lat: {selectedInc.lat || selectedInc.latitude || '0'} · Lng: {selectedInc.lng || selectedInc.longitude || '0'}
                 </div>
                 {selectedInc.assigned_responder_id && (
                   <div className="font-mono text-xs mt-2" style={{ color: '#10b981' }}>
@@ -2423,6 +2588,149 @@ function IncidentsTab({ incidentsList, historyList }: { incidentsList?: any[]; h
                 )}
               </div>
 
+              {/* 11 AI AGENT PIPELINE STATUS CHECKLIST */}
+              <div className="p-4 rounded-xl" style={{ background: 'rgba(6,182,212,0.03)', border: '1px solid rgba(6,182,212,0.2)' }}>
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-cyan-400">🤖</span>
+                    <div className="font-mono text-xs tracking-widest font-bold text-cyan-400">
+                      11-AGENT AI PIPELINE · VERIFICATION & ANALYSIS
+                    </div>
+                  </div>
+                  {loadingAgents ? (
+                    <span className="font-mono text-[10px] text-cyan-400 animate-pulse">SYNCING AGENTS...</span>
+                  ) : (
+                    <span className="font-mono text-[10px] text-white/40">
+                      {agentResults?.plan?.current_step || 11}/11 AGENTS EXECUTED
+                    </span>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  {PIPELINE_AGENTS_SCHEMA.map((agentDef) => {
+                    const records: any[] = agentResults?.records || [];
+                    const match = records.find((r: any) =>
+                      (r.agent_name && r.agent_name.toLowerCase().includes(agentDef.name.toLowerCase().slice(0, 5))) ||
+                      r.agent_id === agentDef.id ||
+                      (agentDef.id === 1 && r.agent_name?.toLowerCase().includes('ingest')) ||
+                      (agentDef.id === 2 && r.agent_name?.toLowerCase().includes('verif')) ||
+                      (agentDef.id === 3 && r.agent_name?.toLowerCase().includes('situat')) ||
+                      (agentDef.id === 4 && r.agent_name?.toLowerCase().includes('prior')) ||
+                      (agentDef.id === 5 && r.agent_name?.toLowerCase().includes('resour')) ||
+                      (agentDef.id === 6 && r.agent_name?.toLowerCase().includes('capac')) ||
+                      (agentDef.id === 7 && r.agent_name?.toLowerCase().includes('route')) ||
+                      (agentDef.id === 8 && r.agent_name?.toLowerCase().includes('forec')) ||
+                      (agentDef.id === 9 && r.agent_name?.toLowerCase().includes('coord')) ||
+                      (agentDef.id === 10 && r.agent_name?.toLowerCase().includes('critic')) ||
+                      (agentDef.id === 11 && r.agent_name?.toLowerCase().includes('analy'))
+                    );
+
+                    const isCompleted = match?.status === 'COMPLETED' || (agentResults?.plan?.current_step >= agentDef.id);
+                    const statusText = isCompleted ? 'COMPLETE' : match?.status || 'WAITING';
+                    const statusColor = isCompleted ? '#10b981' : statusText === 'RUNNING' ? '#06b6d4' : '#f59e0b';
+                    const summaryText = match?.output_summary || match?.output_data?.summary || match?.output_data?.action || agentDef.desc;
+
+                    return (
+                      <div
+                        key={agentDef.id}
+                        className="p-2.5 rounded-lg flex flex-col gap-1"
+                        style={{
+                          background: isCompleted ? 'rgba(16,185,129,0.04)' : 'rgba(255,255,255,0.02)',
+                          border: `1px solid ${isCompleted ? 'rgba(16,185,129,0.2)' : 'rgba(255,255,255,0.05)'}`,
+                        }}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className="w-1.5 h-1.5 rounded-full" style={{ background: statusColor }} />
+                            <span className="font-condensed font-bold text-xs text-white">
+                              {agentDef.id}. {agentDef.name}
+                            </span>
+                          </div>
+                          <span
+                            className="font-mono text-[9px] px-1.5 py-0.5 rounded font-bold"
+                            style={{ background: `${statusColor}15`, color: statusColor }}
+                          >
+                            {statusText}
+                          </span>
+                        </div>
+                        <div className="font-mono text-[10px] text-white/50 truncate">
+                          {summaryText}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* EVIDENCE SOURCES & CORRELATED REPORTS */}
+              <div className="p-4 rounded-xl" style={{ background: 'rgba(245,158,11,0.03)', border: '1px solid rgba(245,158,11,0.2)' }}>
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-amber-400">📄</span>
+                    <div className="font-mono text-xs tracking-widest font-bold text-amber-400">
+                      EVIDENCE SOURCES & CORRELATED REPORTS ({correlatedReports.length})
+                    </div>
+                  </div>
+                  {loadingReports && (
+                    <span className="font-mono text-[10px] text-amber-400 animate-pulse">SYNCING REPORTS...</span>
+                  )}
+                </div>
+
+                {correlatedReports.length > 0 ? (
+                  <div className="space-y-2">
+                    {correlatedReports.map((rpt: any) => {
+                      const rptSourceColor = rpt.source === 'CITIZEN_SOS' ? '#ef4444' : rpt.source === 'CITIZEN_REPORT' ? '#f59e0b' : '#06b6d4';
+                      return (
+                        <div
+                          key={rpt.id}
+                          className="p-3 rounded-lg flex flex-col gap-1.5"
+                          style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}
+                        >
+                          <div className="flex items-center justify-between flex-wrap gap-2">
+                            <div className="flex items-center gap-2">
+                              <span
+                                className="font-mono text-[9px] px-1.5 py-0.5 rounded font-bold"
+                                style={{ background: `${rptSourceColor}20`, color: rptSourceColor }}
+                              >
+                                {rpt.source}
+                              </span>
+                              <span className="font-mono text-xs font-bold text-white">
+                                {rpt.reporter_name || 'Anonymous Citizen'}
+                              </span>
+                              {rpt.reporter_phone && (
+                                <span className="font-mono text-[10px] text-white/40">
+                                  ({rpt.reporter_phone})
+                                </span>
+                              )}
+                            </div>
+                            <div className="font-mono text-[10px] text-white/30">
+                              {rpt.created_at ? new Date(rpt.created_at).toLocaleTimeString() : 'Recent'}
+                            </div>
+                          </div>
+                          <div className="font-mono text-xs text-white/70 leading-snug">
+                            {rpt.description || 'Disaster report submitted.'}
+                          </div>
+                          <div className="flex items-center gap-3 font-mono text-[10px] text-white/40 flex-wrap">
+                            <span>📍 {rpt.location || 'Reported Scene'}</span>
+                            {rpt.affected_people > 0 && (
+                              <span>👥 {rpt.affected_people} Affected</span>
+                            )}
+                            {rpt.latitude && rpt.longitude && (
+                              <span>GPS: {Number(rpt.latitude).toFixed(4)}, {Number(rpt.longitude).toFixed(4)}</span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="p-3 rounded-lg font-mono text-xs text-white/35 text-center bg-white/[0.01] border border-white/[0.03]">
+                    Single incident entry. No secondary citizen or field reports linked yet.
+                  </div>
+                )}
+              </div>
+
+              {/* Operational History & Audit Trail */}
               <div className="p-4 rounded-xl"
                 style={{ background: 'rgba(168,85,247,0.05)', border: '1px solid rgba(168,85,247,0.2)' }}>
                 <div className="font-mono text-xs tracking-widest mb-3" style={{ color: '#a855f7' }}>OPERATIONAL HISTORY & AUDIT TRAIL</div>
@@ -2447,6 +2755,7 @@ function IncidentsTab({ incidentsList, historyList }: { incidentsList?: any[]; h
                 )}
               </div>
 
+              {/* Status Action Banner */}
               <div className="mt-auto">
                 {(selectedInc.status === 'RESPONDING' || selectedInc.status === 'DISPATCHED') ? (
                   <div className="py-3.5 rounded-xl font-condensed font-bold text-sm tracking-widest text-center"
@@ -2477,6 +2786,14 @@ function IncidentsTab({ incidentsList, historyList }: { incidentsList?: any[]; h
           )}
         </AnimatePresence>
       </div>
+
+      {/* Authority Incident Reporting Modal */}
+      <ReportIncidentModal
+        isOpen={showReportModal}
+        onClose={() => setShowReportModal(false)}
+        onSuccess={handleReportSuccess}
+        sourceContext="AUTHORITY_REPORT"
+      />
     </div>
   );
 }
@@ -2884,6 +3201,7 @@ export default function CommandHome() {
             eventType === 'AGENT_STATUS_UPDATED' ||
             eventType === 'ORCHESTRATION_STARTED' ||
             eventType === 'ORCHESTRATION_COMPLETED' ||
+            eventType === 'ORCHESTRATION_WAITING_APPROVAL' ||
             eventType === 'HUMAN_APPROVAL_REQUIRED' ||
             eventType === 'APPROVAL_RESOLVED' ||
             eventType === 'ORCHESTRATION_EXECUTING' ||
@@ -2891,6 +3209,8 @@ export default function CommandHome() {
             eventType === 'OPERATIONAL_STATE_CHANGED' ||
             eventType === 'ORCHESTRATION_IDLE' ||
             eventType === 'EMERGENCY_REQUEST_CREATED' ||
+            eventType === 'INCIDENT_CREATED' ||
+            eventType === 'INCIDENT_REPORT_SUBMITTED' ||
             eventType === 'INCIDENT_STATUS_CHANGED'
           ) {
             commandApi.getOverview().then((res) => {
@@ -3345,7 +3665,7 @@ export default function CommandHome() {
                   />
                 )}
                 {tab === 'evacuation' && <EvacuationTab />}
-                {tab === 'incidents' && <IncidentsTab incidentsList={liveIncidents} historyList={liveHistory} />}
+                {tab === 'incidents' && <IncidentsTab incidentsList={liveIncidents} historyList={liveHistory} onRefresh={fetchPredictiveData} />}
                 {tab === 'dispatch' && <DispatchTab incidentsList={liveIncidents} respondersList={liveResponders} dispatchesList={liveDispatches} />}
               </div>
             )}

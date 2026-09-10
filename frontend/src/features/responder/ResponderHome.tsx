@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useLocation } from 'react-router';
 import { respondersApi, trackingApi } from '../../api';
 import OperationalMap, { MapMarker } from '../../components/map/OperationalMap';
+import ReportIncidentModal from '../../components/incident/ReportIncidentModal';
 
 type MissionState =
   | 'REQUESTED'
@@ -369,6 +370,7 @@ export default function ResponderHome() {
   const [isGpsSharing, setIsGpsSharing] = useState(false);
   const [currentCoords, setCurrentCoords] = useState<{ lat: number; lng: number; accuracy?: number } | null>(null);
   const [routeAlert, setRouteAlert] = useState<{ show: boolean; message: string } | null>(null);
+  const [showReportModal, setShowReportModal] = useState(false);
 
   const section = useSectionFromUrl();
   const watchIdRef = useRef<number | null>(null);
@@ -647,6 +649,23 @@ export default function ResponderHome() {
               );
             })}
           </div>
+
+          <div className="pt-4 border-t border-white/[0.05] mt-4">
+            <motion.button
+              onClick={() => setShowReportModal(true)}
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              className="w-full py-2.5 px-3 rounded-lg font-condensed font-bold text-xs tracking-wider flex items-center justify-center gap-2 cursor-pointer transition-colors"
+              style={{
+                background: 'rgba(239, 68, 68, 0.15)',
+                color: '#f87171',
+                border: '1px solid rgba(239, 68, 68, 0.35)',
+              }}
+            >
+              <span>📢</span>
+              FIELD INCIDENT REPORT
+            </motion.button>
+          </div>
         </div>
       </motion.div>
 
@@ -743,6 +762,14 @@ export default function ResponderHome() {
           </div>
         </div>
       </div>
+
+      {/* Field Incident Reporting Modal */}
+      <ReportIncidentModal
+        isOpen={showReportModal}
+        onClose={() => setShowReportModal(false)}
+        defaultCoords={currentCoords}
+        sourceContext="PORTAL_REPORT"
+      />
     </div>
   );
 }
