@@ -258,6 +258,11 @@ respondersRouter.patch('/mission/:id/status', async (req: Request, res: Response
       }
 
       if (isCompleted && incidentId) {
+        // Release any associated responder
+        await query(
+          `UPDATE responders SET status = 'AVAILABLE', current_incident_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE current_incident_id = $1 OR id = $2`,
+          [incidentId, responderId || null]
+        ).catch(() => {});
         // Release any associated ambulance
         await query(
           `UPDATE ambulances SET status = 'AVAILABLE', updated_at = CURRENT_TIMESTAMP WHERE last_update ILIKE $1`,
