@@ -101,32 +101,76 @@ declare global {
   interface Window {
     google?: any;
     __googleMapsLoadingPromise?: Promise<void>;
+    __nexusGoogleMapsCallback?: () => void;
+    gm_authFailure?: () => void;
   }
 }
 
 function loadGoogleMapsScript(apiKey: string): Promise<void> {
-  if (window.google?.maps) {
+  // 1. If already fully loaded and Map class is ready, resolve immediately
+  if (window.google?.maps?.Map) {
     return Promise.resolve();
   }
 
+  // 2. If a load is already in progress, reuse the existing promise
   if (window.__googleMapsLoadingPromise) {
     return window.__googleMapsLoadingPromise;
   }
 
-  window.__googleMapsLoadingPromise = new Promise((resolve, reject) => {
-    const existingScript = document.querySelector('script[src*="maps.googleapis.com"]');
+  // 3. Initiate loading
+  window.__googleMapsLoadingPromise = new Promise<void>((resolve, reject) => {
+    if (window.google?.maps?.Map) {
+      resolve();
+      return;
+    }
+
+    const callbackName = '__nexusGoogleMapsCallback';
+
+    const onReady = () => {
+      // If modern importLibrary is supported, ensure maps, marker, and geometry libraries are ready
+      if (typeof window.google?.maps?.importLibrary === 'function') {
+        Promise.all([
+          window.google.maps.importLibrary('maps'),
+          window.google.maps.importLibrary('marker'),
+          window.google.maps.importLibrary('geometry'),
+          window.google.maps.importLibrary('places'),
+        ])
+          .then(() => resolve())
+          .catch(() => resolve()); // Core maps may already be available
+      } else {
+        resolve();
+      }
+    };
+
+    window[callbackName] = () => {
+      onReady();
+    };
+
+    // Check if script tag was already injected in DOM
+    const existingScript = document.querySelector<HTMLScriptElement>('script[src*="maps.googleapis.com"]');
     if (existingScript) {
-      existingScript.addEventListener('load', () => resolve());
-      existingScript.addEventListener('error', (e) => reject(e));
+      if (window.google?.maps?.Map) {
+        resolve();
+        return;
+      }
+      existingScript.addEventListener('load', () => onReady());
+      existingScript.addEventListener('error', (e) => {
+        window.__googleMapsLoadingPromise = undefined;
+        reject(e);
+      });
       return;
     }
 
     const script = document.createElement('script');
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=places,geometry,routes,marker&v=weekly&loading=async`;
+    // Load required libraries (places, geometry, marker) with asynchronous callback
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=places,geometry,marker&v=weekly&loading=async&callback=${callbackName}`;
     script.async = true;
     script.defer = true;
-    script.onload = () => resolve();
-    script.onerror = (err) => reject(err);
+    script.onerror = (err) => {
+      window.__googleMapsLoadingPromise = undefined;
+      reject(err);
+    };
+
     document.head.appendChild(script);
   });
 
@@ -286,18 +330,37 @@ export default function OperationalMap({
 
     let isMounted = true;
 
+    // Listen for auth failure from Google Maps Platform
+    const prevAuthFailure = window.gm_authFailure;
+    window.gm_authFailure = () => {
+      console.warn('[Google Maps Platform]: Authentication failure reported by Google.');
+      if (isMounted) {
+        setLoadError('Google Maps Platform authentication failed. Please verify API key, billing status, and domain restrictions in Google Cloud Console.');
+      }
+      if (typeof prevAuthFailure === 'function') {
+        prevAuthFailure();
+      }
+    };
+
     loadGoogleMapsScript(apiKey)
       .then(() => {
         if (!isMounted || !mapContainerRef.current) return;
 
-        const map = new window.google!.maps.Map(mapContainerRef.current, {
+        if (!window.google?.maps?.Map) {
+          throw new Error('Google Maps JavaScript API Map class unavailable.');
+        }
+
+        const controlPosition =
+          window.google.maps.ControlPosition?.RIGHT_BOTTOM ?? 9;
+
+        const map = new window.google.maps.Map(mapContainerRef.current, {
           center,
           zoom,
           styles: DARK_MAP_STYLE,
           disableDefaultUI: true,
           zoomControl: true,
           zoomControlOptions: {
-            position: window.google!.maps.ControlPosition.RIGHT_BOTTOM,
+            position: controlPosition,
           },
           mapTypeId: mapMode === 'SATELLITE' ? 'hybrid' : 'roadmap',
           backgroundColor: '#090d12',
@@ -339,7 +402,7 @@ export default function OperationalMap({
       mapInstanceRef.current.panTo(center);
       setCurrentCenter(center);
     }
-  }, [center.lat, center.lng]);
+  }, [center?.lat, center?.lng]);
 
   // Update Markers
   useEffect(() => {
@@ -570,8 +633,22 @@ export default function OperationalMap({
       {/* Map Target Canvas Container */}
       <div ref={mapContainerRef} className="w-full h-full" />
 
+      {/* Loading Overlay while Google Maps Platform initializes */}
+      {!mapLoaded && !loadError && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center p-6 bg-[#080b0f]/80 backdrop-blur-xs z-20 pointer-events-none">
+          <div className="glass p-5 rounded-xl border border-white/10 flex flex-col items-center gap-3 font-mono text-xs shadow-2xl">
+            <div className="w-7 h-7 border-2 border-cyan-500/20 border-t-cyan-400 rounded-full animate-spin" />
+            <div className="flex items-center gap-2 text-cyan-400 tracking-wider">
+              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
+              INITIALIZING GOOGLE MAPS PLATFORM...
+            </div>
+            <div className="text-white/40 text-[10px]">Synchronizing tactical spatial layers</div>
+          </div>
+        </div>
+      )}
+
       {/* Controlled Operational Fallback if Google Maps is unconfigured/unavailable */}
-      {(!mapLoaded || loadError) && (
+      {loadError && (
         <div className="absolute inset-0 flex flex-col items-center justify-center p-6 bg-[#080b0f]/95 z-20">
           <div className="max-w-md w-full glass p-6 rounded-xl border border-white/10 space-y-4">
             <div className="flex items-center justify-between">
@@ -619,7 +696,7 @@ export default function OperationalMap({
             </div>
 
             <div className="p-2.5 rounded bg-amber-500/10 border border-amber-500/20 text-amber-400 font-mono text-[11px] leading-relaxed">
-              ℹ️ {loadError || 'Loading Google Maps Platform telemetry...'}
+              ⚠️ {loadError}
             </div>
           </div>
         </div>
