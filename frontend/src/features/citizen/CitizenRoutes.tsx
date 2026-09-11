@@ -118,8 +118,8 @@ export default function CitizenRoutes() {
     let isMounted = true;
     if (!destinationShelter) return;
 
-    const destLat = parseFloat(destinationShelter.lat ?? destinationShelter.latitude ?? '28.6328');
-    const destLng = parseFloat(destinationShelter.lng ?? destinationShelter.longitude ?? '77.2197');
+    const destLat = parseFloat(destinationShelter.lat ?? destinationShelter.latitude ?? '30.3782');
+    const destLng = parseFloat(destinationShelter.lng ?? destinationShelter.longitude ?? '76.7767');
 
     if (isNaN(destLat) || isNaN(destLng)) return;
 
@@ -252,8 +252,8 @@ export default function CitizenRoutes() {
 
     // Real destination shelter marker
     if (destinationShelter) {
-      const dLat = parseFloat(destinationShelter.lat ?? destinationShelter.latitude ?? '28.6328');
-      const dLng = parseFloat(destinationShelter.lng ?? destinationShelter.longitude ?? '77.2197');
+      const dLat = parseFloat(destinationShelter.lat ?? destinationShelter.latitude ?? '30.3782');
+      const dLng = parseFloat(destinationShelter.lng ?? destinationShelter.longitude ?? '76.7767');
       if (!isNaN(dLat) && !isNaN(dLng)) {
         list.push({
           id: `shelter-${destinationShelter.id}`,
