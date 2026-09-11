@@ -59,7 +59,7 @@ export async function runPrototypeResourceRecovery(options?: { releaseHours?: nu
       SELECT * FROM dispatch_records
       WHERE status = 'DISPATCHED'
         AND (is_prototype_released IS NULL OR is_prototype_released = FALSE)
-        AND created_at <= NOW() - ($1 || ' hours')::interval
+        AND created_at <= NOW() - ($1 * interval '1 hour')
       ORDER BY created_at ASC
       FOR UPDATE
     `, [releaseHours]);
