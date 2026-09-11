@@ -56,6 +56,9 @@ app.use((req, res, next) => {
   next();
 });
 
+// ── Favicon Handler ───────────────────────────────────────────
+app.get('/favicon.ico', (_req, res) => { res.status(204).end(); });
+
 // ── Health Check ─────────────────────────────────────────────
 app.get(['/health', '/api/health'], async (req, res) => {
   const dbStatus = await testConnection();

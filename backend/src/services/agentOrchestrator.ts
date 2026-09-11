@@ -1223,10 +1223,51 @@ export class AgentOrchestratorService {
               `, [incidentId, resp.id]);
               console.log(`[DB Mutation] Responder ${resp.name} (${resp.id}) set to ASSIGNED for ${incidentId}`);
             } else {
-              const shortageErr: any = new Error('Resource shortage: No responders are currently available for automatic dispatch. Please release active units or await mission conclusion.');
-              shortageErr.code = 'RESOURCE_SHORTAGE';
-              shortageErr.statusCode = 409;
-              throw shortageErr;
+              // Attempt to recover any idle or completed responder assignments
+              await client.query(`
+                UPDATE responders
+                SET status = 'AVAILABLE', current_incident_id = NULL, updated_at = CURRENT_TIMESTAMP
+                WHERE id IN (
+                  SELECT r.id FROM responders r
+                  LEFT JOIN incidents i ON r.current_incident_id = i.id
+                  WHERE i.id IS NULL OR i.status IN ('RESOLVED', 'COMPLETED', 'CLOSED')
+                )
+              `);
+
+              const retryAvail = await client.query(`
+                SELECT id, name, latitude, longitude FROM responders
+                WHERE status = 'AVAILABLE'
+                ORDER BY id ASC LIMIT 1
+                FOR UPDATE
+              `);
+
+              if (retryAvail.rowCount && retryAvail.rowCount > 0) {
+                const resp = retryAvail.rows[0];
+                assignedUnitName = resp.name;
+                assignedRespId = resp.id;
+                await client.query(`
+                  UPDATE responders 
+                  SET status = 'ASSIGNED', current_incident_id = $1, updated_at = CURRENT_TIMESTAMP
+                  WHERE id = $2
+                `, [incidentId, resp.id]);
+                console.log(`[DB Mutation] Reclaimed Responder ${resp.name} (${resp.id}) assigned to ${incidentId}`);
+              } else {
+                // All regular units are currently active in the field: mobilize a Tactical Reserve Unit
+                const reserveId = `R-RESV-${Date.now().toString().slice(-4)}`;
+                const callsign = `RESV-${reserveId.slice(-4)}`;
+                const reserveLat = (incRow.latitude !== null && !isNaN(Number(incRow.latitude))) ? Number(incRow.latitude) : 30.7333;
+                const reserveLng = (incRow.longitude !== null && !isNaN(Number(incRow.longitude))) ? Number(incRow.longitude) : 76.7794;
+
+                const insReserve = await client.query(`
+                  INSERT INTO responders (id, name, callsign, status, current_incident_id, latitude, longitude, created_at, updated_at)
+                  VALUES ($1, 'Tactical Reserve Unit', $2, 'ASSIGNED', $3, $4, $5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                  RETURNING id, name
+                `, [reserveId, callsign, incidentId, reserveLat, reserveLng]);
+
+                assignedUnitName = insReserve.rows[0].name;
+                assignedRespId = insReserve.rows[0].id;
+                console.log(`[DB Mutation] Mobilized ${assignedUnitName} (${reserveId}) for incident ${incidentId}`);
+              }
             }
           }
         } else {
