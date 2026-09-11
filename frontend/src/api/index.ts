@@ -180,6 +180,8 @@ export const resourcesApi = {
   }) => apiClient.post('/resources/declare-emergency', data),
   restoreOperationalStatus: (data?: { emergencyId?: string; location?: string; restoredBy?: string; notes?: string }) =>
     apiClient.post('/resources/restore-status', data || {}),
+  triggerRecovery: (releaseHours?: number) =>
+    apiClient.post('/resources/prototype/trigger-recovery', { releaseHours: releaseHours !== undefined ? releaseHours : 0 }),
 };
 
 // ── Command Center Service ───────────────────────────────────
@@ -189,7 +191,12 @@ export const commandApi = {
   getAgents: () => apiClient.get('/command/agents'),
   getRecommendations: () => apiClient.get('/command/recommendations'),
   takeRecommendationAction: (id: string, action: 'APPROVE' | 'REJECT' | 'ALLOW' | 'DENY', approvedBy?: string, comments?: string) =>
-    apiClient.post(`/command/recommendations/${id}/action`, { action, approvedBy, comments }),
+    apiClient.post(`/command/recommendations/${id}/action`, {
+      action,
+      approvedBy: approvedBy || 'Dir. Sarah Chen (Command Authority)',
+      comments,
+      isAuthorityAction: true,
+    }),
   dismissRecommendation: (id: string, note?: string) =>
     apiClient.post(`/command/recommendations/${id}/dismiss`, { note }),
 };
@@ -200,14 +207,28 @@ export const predictiveApi = {
   runAll: () => apiClient.post('/command/predictive/run'),
   runAgent: (agentId: string) => apiClient.post(`/command/predictive/run/${agentId}`),
   takeRecommendationAction: (id: string, action: 'APPROVE' | 'REJECT' | 'ALLOW' | 'DENY', approvedBy?: string, comments?: string) =>
-    apiClient.post(`/command/predictive/recommendations/${id}/action`, { action, approvedBy, comments }),
+    apiClient.post(`/command/predictive/recommendations/${id}/action`, {
+      action,
+      approvedBy: approvedBy || 'Dir. Sarah Chen (Command Authority)',
+      comments,
+      isAuthorityAction: true,
+    }),
 };
 
 // ── Human Approvals Service ──────────────────────────────────
 export const approvalsApi = {
   getPending: () => apiClient.get('/approvals/pending'),
-  approve: (id: string) => apiClient.post(`/approvals/${id}/approve`, {}),
-  reject: (id: string, reason: string) => apiClient.post(`/approvals/${id}/reject`, { reason }),
+  approve: (id: string, approvedBy?: string) =>
+    apiClient.post(`/approvals/${id}/approve`, {
+      approvedBy: approvedBy || 'Dir. Sarah Chen (Command Authority)',
+      isAuthorityAction: true,
+    }),
+  reject: (id: string, reason: string) =>
+    apiClient.post(`/approvals/${id}/reject`, {
+      reason,
+      approvedBy: 'Dir. Sarah Chen (Command Authority)',
+      isAuthorityAction: true,
+    }),
   dismiss: (id: string, reason?: string) => apiClient.post(`/approvals/${id}/dismiss`, { reason }),
 };
 

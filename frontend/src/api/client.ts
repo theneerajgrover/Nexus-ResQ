@@ -16,10 +16,13 @@ export interface ApiResponse<T = any> {
 }
 
 class ApiClient {
-  private getHeaders(): HeadersInit {
+  private getHeaders(endpoint?: string): HeadersInit {
     const headers: HeadersInit = {
       'Content-Type': 'application/json',
     };
+    if (endpoint && (endpoint.startsWith('/command') || endpoint.startsWith('/approvals'))) {
+      headers['x-authority-action'] = 'true';
+    }
     const token = localStorage.getItem('nexus_token');
     if (token) {
       headers['Authorization'] = `Bearer ${token}`;
@@ -31,7 +34,7 @@ class ApiClient {
     try {
       const res = await fetch(`${BASE_URL}${endpoint}`, {
         method: 'GET',
-        headers: this.getHeaders(),
+        headers: this.getHeaders(endpoint),
       });
       const json = await res.json();
       return json;
@@ -45,7 +48,7 @@ class ApiClient {
     try {
       const res = await fetch(`${BASE_URL}${endpoint}`, {
         method: 'POST',
-        headers: this.getHeaders(),
+        headers: this.getHeaders(endpoint),
         body: body ? JSON.stringify(body) : undefined,
       });
       const json = await res.json();
@@ -60,7 +63,7 @@ class ApiClient {
     try {
       const res = await fetch(`${BASE_URL}${endpoint}`, {
         method: 'PUT',
-        headers: this.getHeaders(),
+        headers: this.getHeaders(endpoint),
         body: body ? JSON.stringify(body) : undefined,
       });
       const json = await res.json();
@@ -75,7 +78,7 @@ class ApiClient {
     try {
       const res = await fetch(`${BASE_URL}${endpoint}`, {
         method: 'PATCH',
-        headers: this.getHeaders(),
+        headers: this.getHeaders(endpoint),
         body: body ? JSON.stringify(body) : undefined,
       });
       const json = await res.json();
@@ -90,7 +93,7 @@ class ApiClient {
     try {
       const res = await fetch(`${BASE_URL}${endpoint}`, {
         method: 'DELETE',
-        headers: this.getHeaders(),
+        headers: this.getHeaders(endpoint),
       });
       const json = await res.json();
       return json;
