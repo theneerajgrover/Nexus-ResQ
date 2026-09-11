@@ -620,7 +620,7 @@ export function ApprovalModal({
                           const res = await commandApi.takeRecommendationAction(
                             planIdToApprove,
                             'REJECT',
-                            undefined,
+                            'Dir. Sarah Chen (Command Authority)',
                             note || 'Rejected by Authority Officer'
                           );
                           if (res && res.success !== false) {
@@ -659,7 +659,7 @@ export function ApprovalModal({
                           const res = await commandApi.takeRecommendationAction(
                             planIdToApprove,
                             'APPROVE',
-                            undefined,
+                            'Dir. Sarah Chen (Command Authority)',
                             note
                           );
                           if (res && res.success !== false) {
