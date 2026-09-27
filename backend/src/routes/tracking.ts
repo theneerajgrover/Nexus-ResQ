@@ -381,6 +381,15 @@ trackingRouter.post('/status', async (req: Request, res: Response): Promise<void
         await query(
           `UPDATE equipment SET available = LEAST(qty, available + 1), status = 'AVAILABLE', updated_at = CURRENT_TIMESTAMP WHERE available < qty`
         ).catch(() => {});
+        // Cleanly supersede any lingering unapproved plans for this resolved incident
+        await query(
+          `UPDATE approvals SET status = 'SUPERSEDED', updated_at = CURRENT_TIMESTAMP WHERE incident_id = $1 AND status = 'PENDING'`,
+          [effectiveIncidentId]
+        ).catch(() => {});
+        await query(
+          `UPDATE orchestration_plans SET status = 'SUPERSEDED', approval_status = 'SUPERSEDED', updated_at = CURRENT_TIMESTAMP WHERE incident_id = $1 AND status = 'WAITING_FOR_APPROVAL'`,
+          [effectiveIncidentId]
+        ).catch(() => {});
       }
     }
 

@@ -272,7 +272,7 @@ Run backend and frontend servers using the root convenience commands:
 # Terminal 1: Backend Express Server (Port 8000)
 npm run dev:backend
 
-# Terminal 2: Frontend Vite Server (Port 5173)
+# Terminal 2: Frontend Vite Server (Port 5173)  
 npm run dev:frontend
 ```
 

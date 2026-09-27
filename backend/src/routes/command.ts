@@ -59,7 +59,11 @@ commandRouter.get('/overview', async (req: Request, res: Response): Promise<void
         FROM agent_pipeline_state ORDER BY agent_id ASC
       `),
       query(`
-        SELECT * FROM ai_recommendations WHERE status = 'PENDING_APPROVAL' ORDER BY created_at DESC LIMIT 1
+        SELECT r.* FROM ai_recommendations r
+        LEFT JOIN incidents i ON r.incident_id = i.id
+        WHERE r.status = 'PENDING_APPROVAL'
+          AND (i.status IS NULL OR i.status NOT IN ('RESOLVED', 'COMPLETED', 'CLOSED', 'CANCELLED'))
+        ORDER BY r.created_at DESC LIMIT 1
       `),
       query(`
         SELECT 
@@ -70,9 +74,11 @@ commandRouter.get('/overview', async (req: Request, res: Response): Promise<void
           a.reviewed_at
         FROM orchestration_plans p
         LEFT JOIN approvals a ON (a.plan_id = p.plan_id OR a.plan_id = p.id OR a.approval_id = p.approval_id)
+        LEFT JOIN incidents i ON (p.incident_id = i.id OR a.incident_id = i.id)
         ORDER BY 
           CASE 
-            WHEN coalesce(a.status, p.approval_status, p.status) = 'PENDING' OR p.status = 'WAITING_FOR_APPROVAL' THEN 0 
+            WHEN (coalesce(a.status, p.approval_status, p.status) = 'PENDING' OR p.status = 'WAITING_FOR_APPROVAL')
+              AND (i.status IS NULL OR i.status NOT IN ('RESOLVED', 'COMPLETED', 'CLOSED', 'CANCELLED')) THEN 0 
             WHEN p.status IN ('IN_PROGRESS', 'PROCESSING') THEN 1 
             WHEN p.status = 'EXECUTING' THEN 2 
             WHEN p.status = 'MONITORING' THEN 3 
@@ -110,6 +116,7 @@ commandRouter.get('/overview', async (req: Request, res: Response): Promise<void
         LEFT JOIN ai_recommendations r ON a.plan_id = r.id
         LEFT JOIN incidents i ON a.incident_id = i.id
         WHERE a.status = 'PENDING'
+          AND (i.status IS NULL OR i.status NOT IN ('RESOLVED', 'COMPLETED', 'CLOSED', 'CANCELLED'))
         ORDER BY a.created_at DESC
         LIMIT 1
       `),

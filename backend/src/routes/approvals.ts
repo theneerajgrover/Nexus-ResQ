@@ -59,6 +59,7 @@ approvalsRouter.get('/pending', async (req: Request, res: Response): Promise<voi
       LEFT JOIN incidents i ON a.incident_id = i.id
       LEFT JOIN orchestration_plans p ON (p.plan_id = a.plan_id OR p.approval_id = a.approval_id)
       WHERE a.status = 'PENDING'
+        AND (i.status IS NULL OR i.status NOT IN ('RESOLVED', 'COMPLETED', 'CLOSED', 'CANCELLED'))
       ORDER BY a.created_at DESC
     `);
 

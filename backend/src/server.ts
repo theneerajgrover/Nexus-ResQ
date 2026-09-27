@@ -109,6 +109,16 @@ app.listen(PORT, '0.0.0.0', async () => {
   console.log(`============================================================\n`);
 
   await testConnection();
+
+  // ── Ensure base schema exists (idempotent: CREATE TABLE IF NOT EXISTS) ──
+  // Required for Render / fresh deployments where `npm run db:setup` was never run.
+  try {
+    const { runMigration } = await import('./db/migrate');
+    await runMigration();
+  } catch (err: any) {
+    console.error('[Startup Base Schema Error]:', err.message);
+  }
+
   try {
     const { runRealInputPipelineMigration } = await import('./db/migrate_real_input_pipeline');
     await runRealInputPipelineMigration();

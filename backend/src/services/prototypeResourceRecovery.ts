@@ -191,27 +191,15 @@ export async function runPrototypeResourceRecovery(options?: { releaseHours?: nu
             }
           }
 
-          // G. Resolve incident state
+          // G. Reconcile incident active responder count (do NOT resolve incident prematurely)
           await client.query(`
             UPDATE incidents
-            SET status = 'RESOLVED',
-                responders_count = 0,
-                pending = FALSE,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = $1 AND status != 'RESOLVED'
+            SET responders_count = (
+              SELECT COUNT(*)::int FROM responders WHERE current_incident_id = $1 AND status != 'AVAILABLE'
+            ),
+            updated_at = CURRENT_TIMESTAMP
+            WHERE id = $1
           `, [incidentId]);
-
-          // H. Log transition in incident_status_history
-          const histId = `HIST-${Date.now()}-REL-${dispatch.id}`;
-          await client.query(`
-            INSERT INTO incident_status_history (id, incident_id, previous_status, new_status, actor, notes, created_at)
-            VALUES ($1, $2, 'RESPONDING', 'RESOLVED', 'PROTOTYPE_LIFECYCLE', $3, CURRENT_TIMESTAMP)
-            ON CONFLICT (id) DO NOTHING
-          `, [
-            histId,
-            incidentId,
-            `Prototype lifecycle auto-release completed (${releaseHours}h): ${dispatch.unit} and related operational assets transitioned back to AVAILABLE.`,
-          ]);
         }
 
         // I. If dispatch represented supply distribution, restore supply quantity
