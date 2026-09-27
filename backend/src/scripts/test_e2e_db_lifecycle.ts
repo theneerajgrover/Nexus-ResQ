@@ -19,14 +19,14 @@ function getAuthorityToken(): string {
 }
 
 // Helper to make fetch calls
-async function api(path: string, options: RequestInit = {}) {
+async function api(path: string, options: RequestInit = {}): Promise<{ status: number; ok: boolean; data: any }> {
   const url = `${BASE_URL}${path}`;
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...(options.headers as any),
   };
   const res = await fetch(url, { ...options, headers });
-  const data = await res.json().catch(() => null);
+  const data: any = await res.json().catch(() => null);
   return { status: res.status, ok: res.ok, data };
 }
 

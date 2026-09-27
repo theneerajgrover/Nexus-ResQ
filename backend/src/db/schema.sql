@@ -35,7 +35,27 @@ CREATE TABLE IF NOT EXISTS responder_applications (
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
--- 3. Incidents Table
+-- 3. Shelters Table (must precede incidents — incidents.shelter_id FK)
+CREATE TABLE IF NOT EXISTS shelters (
+    id VARCHAR(64) PRIMARY KEY, -- e.g. SHL-01
+    name VARCHAR(255) NOT NULL,
+    address VARCHAR(255) NOT NULL,
+    distance VARCHAR(50),
+    walk_time VARCHAR(50),
+    capacity INT NOT NULL CHECK (capacity >= 0),
+    occupancy INT NOT NULL DEFAULT 0 CHECK (occupancy >= 0),
+    status VARCHAR(50) NOT NULL DEFAULT 'OPEN' CHECK (status IN ('OPEN', 'NEAR FULL', 'ACTIVATING', 'CLOSED')),
+    accessible BOOLEAN DEFAULT TRUE,
+    facilities TEXT[],
+    route_safe BOOLEAN DEFAULT TRUE,
+    latitude NUMERIC(10, 6),
+    longitude NUMERIC(10, 6),
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_shelters_status ON shelters(status);
+
+-- 4. Incidents Table
 CREATE TABLE IF NOT EXISTS incidents (
     id VARCHAR(64) PRIMARY KEY, -- e.g. INC-2849
     title VARCHAR(255) NOT NULL,
@@ -56,7 +76,7 @@ CREATE INDEX IF NOT EXISTS idx_incidents_severity ON incidents(severity);
 CREATE INDEX IF NOT EXISTS idx_incidents_status ON incidents(status);
 CREATE INDEX IF NOT EXISTS idx_incidents_shelter_id ON incidents(shelter_id);
 
--- 4. Citizen Emergency / SOS Requests Table
+-- 5. Citizen Emergency / SOS Requests Table
 CREATE TABLE IF NOT EXISTS emergency_requests (
     id VARCHAR(64) PRIMARY KEY, -- e.g. SOS-10293
     user_id VARCHAR(64) REFERENCES users(id) ON DELETE SET NULL,
@@ -76,25 +96,7 @@ CREATE TABLE IF NOT EXISTS emergency_requests (
 
 CREATE INDEX IF NOT EXISTS idx_emergency_requests_status ON emergency_requests(status);
 
--- 5. Shelters Table
-CREATE TABLE IF NOT EXISTS shelters (
-    id VARCHAR(64) PRIMARY KEY, -- e.g. SHL-01
-    name VARCHAR(255) NOT NULL,
-    address VARCHAR(255) NOT NULL,
-    distance VARCHAR(50),
-    walk_time VARCHAR(50),
-    capacity INT NOT NULL CHECK (capacity >= 0),
-    occupancy INT NOT NULL DEFAULT 0 CHECK (occupancy >= 0),
-    status VARCHAR(50) NOT NULL DEFAULT 'OPEN' CHECK (status IN ('OPEN', 'NEAR FULL', 'ACTIVATING', 'CLOSED')),
-    accessible BOOLEAN DEFAULT TRUE,
-    facilities TEXT[],
-    route_safe BOOLEAN DEFAULT TRUE,
-    latitude NUMERIC(10, 6),
-    longitude NUMERIC(10, 6),
-    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX IF NOT EXISTS idx_shelters_status ON shelters(status);
+-- (shelters table moved to position 3 — before incidents FK dependency)
 
 -- 6. Evacuation Routes Table
 CREATE TABLE IF NOT EXISTS evacuation_routes (

@@ -112,11 +112,19 @@ app.listen(PORT, '0.0.0.0', async () => {
 
   // ── Ensure base schema exists (idempotent: CREATE TABLE IF NOT EXISTS) ──
   // Required for Render / fresh deployments where `npm run db:setup` was never run.
+  // FATAL: If base schema fails, the server MUST NOT continue — all APIs depend on these tables.
   try {
     const { runMigration } = await import('./db/migrate');
-    await runMigration();
+    const migrationResult = await runMigration();
+    if (!migrationResult.success) {
+      console.error(`[FATAL] Base schema migration failed: ${migrationResult.error}`);
+      console.error('[FATAL] Server cannot operate without database schema. Exiting.');
+      process.exit(1);
+    }
   } catch (err: any) {
-    console.error('[Startup Base Schema Error]:', err.message);
+    console.error('[FATAL] Base schema migration error:', err.message);
+    console.error('[FATAL] Server cannot operate without database schema. Exiting.');
+    process.exit(1);
   }
 
   try {
