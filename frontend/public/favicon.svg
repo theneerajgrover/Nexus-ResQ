@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <!-- Dark background hexagon -->
+  <polygon points="32,2 58,17 58,47 32,62 6,47 6,17" fill="#0b0f17" stroke="#dc2626" stroke-width="2.5"/>
+  <!-- Inner hexagon ring -->
+  <polygon points="32,10 50,20 50,44 32,54 14,44 14,20" fill="none" stroke="#dc2626" stroke-width="1.5" opacity="0.7"/>
+  <!-- Command center circle -->
+  <circle cx="32" cy="32" r="8" fill="#dc2626"/>
+  <!-- Cross/plus rescue symbol inside circle -->
+  <rect x="29.5" y="25" width="5" height="14" rx="1" fill="#0b0f17"/>
+  <rect x="25" y="29.5" width="14" height="5" rx="1" fill="#0b0f17"/>
+</svg>
